@@ -1,0 +1,18 @@
+sources:
+  - name: public_data # Tên chung cho nhóm nguồn này
+    database: bigquery-public-data # GCP project chứa public data
+    schema: new_york_taxi_trips # Dataset chứa bảng taxi
+    
+    tables:
+      - name: tlc_yellow_trips_2021 # Chúng ta sẽ dùng dữ liệu taxi vàng năm 2021
+        identifier: tlc_yellow_trips_2021 # Tên thật của bảng
+      - name: taxi_zone_lookup
+        identifier: taxi_zone_geom
+        
+  - name: public_weather
+    database: bigquery-public-data
+    schema: noaa_gsod
+    
+    tables:
+      - name: gsod2021 # Dùng dữ liệu thời tiết năm 2021
+        identifier: gsod2021

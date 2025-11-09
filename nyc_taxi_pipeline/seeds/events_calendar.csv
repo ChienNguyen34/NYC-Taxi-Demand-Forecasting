@@ -1,0 +1,16 @@
+event_date,event_name,event_type
+2021-01-01,New Year's Day,Holiday
+2021-01-18,Martin Luther King Jr. Day,Holiday
+2021-02-12,Lincoln's Birthday,Holiday
+2021-02-15,Washington's Birthday,Holiday
+2021-04-04,Easter Sunday,Holiday
+2021-05-31,Memorial Day,Holiday
+2021-07-04,Independence Day,Holiday
+2021-07-05,Independence Day (Observed),Holiday
+2021-09-06,Labor Day,Holiday
+2021-10-11,Columbus Day,Holiday
+2021-11-02,Election Day,Event
+2021-11-07,NYC Marathon,Event
+2021-11-11,Veterans Day,Holiday
+2021-11-25,Thanksgiving Day,Holiday
+2021-12-25,Christmas Day,Holiday

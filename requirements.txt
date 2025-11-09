@@ -1,0 +1,25 @@
+# dbt and BigQuery
+dbt-bigquery==1.10.2
+dbt-core==1.11.0
+
+# Google Cloud
+google-cloud-bigquery==3.11.4
+google-auth==2.22.0
+
+# Data processing
+pandas==2.0.3
+numpy==1.24.3
+
+# Airflow (optional - if running locally)
+apache-airflow==2.7.0
+apache-airflow-providers-google==10.8.0
+
+# Development tools
+black==23.7.0
+flake8==6.0.0
+pre-commit==3.3.3
+
+# Jupyter (for analysis)
+jupyter==1.0.0
+matplotlib==3.7.2
+seaborn==0.12.2
