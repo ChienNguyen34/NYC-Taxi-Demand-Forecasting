@@ -1,0 +1,13 @@
+nyc_taxi_pipeline:
+  target: prod
+  outputs:
+    prod:
+      type: bigquery
+      method: oauth
+      project: nyc-taxi-project-477115
+      dataset: staging_layer
+      threads: 4
+      location: US
+      job_execution_timeout_seconds: 300
+      job_retries: 1
+      priority: interactive

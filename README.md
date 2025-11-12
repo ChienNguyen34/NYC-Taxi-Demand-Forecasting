@@ -98,6 +98,27 @@ bq query --use_legacy_sql=false < bqml_scripts/train_model.sql
 bq query --use_legacy_sql=false < bqml_scripts/run_forecast.sql
 ```
 
+## 🌊 Streaming Data Simulation
+
+For testing the real-time pipeline without actual mobile apps:
+
+```bash
+# Setup streaming infrastructure
+cd streaming_simulation
+python setup_streaming.py
+
+# Run simulation (converts historical data to real-time events)
+python simulate_realtime_taxi_data.py
+
+# Monitor streaming events (in another terminal)
+python monitor_stream.py
+
+# Run end-to-end tests
+python test_e2e.py
+```
+
+See `streaming_simulation/README.md` for detailed instructions.
+
 ## 📁 Project Structure
 
 ```
@@ -105,11 +126,19 @@ NYC_Taxi_Project/
 ├── README.md                    # This file
 ├── .gitignore                   # Git ignore rules
 ├── requirements.txt             # Python dependencies
+├── ARCHITECTURE.md              # System architecture documentation
 ├── airflow_dags/               # Airflow orchestration
 │   └── nyc_taxi_dag.py
 ├── bqml_scripts/               # BigQuery ML scripts
 │   ├── train_model.sql
 │   └── run_forecast.sql
+├── streaming_simulation/        # Real-time streaming simulation
+│   ├── README.md               # Streaming setup instructions
+│   ├── simulate_realtime_taxi_data.py  # Main simulation script
+│   ├── setup_streaming.py      # Infrastructure setup
+│   ├── monitor_stream.py       # Real-time monitoring
+│   ├── test_e2e.py            # End-to-end testing
+│   └── requirements.txt        # Streaming dependencies
 └── nyc_taxi_pipeline/          # dbt project
     ├── dbt_project.yml
     ├── models/

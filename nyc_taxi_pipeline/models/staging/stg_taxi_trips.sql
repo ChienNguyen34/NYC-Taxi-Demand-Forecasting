@@ -37,5 +37,13 @@ where
     trip_distance > 0
     and passenger_count > 0
     and total_amount > 0
+    -- Filter for actual 2021 data (remove weird future dates)
+    and pickup_datetime >= '2021-01-01'
+    and pickup_datetime < '2021-04-01'  -- Q1 2021 for demo
+    -- Filter valid location IDs (not null/empty)
+    and pickup_location_id is not null
+    and dropoff_location_id is not null
+    and pickup_location_id != ''
+    and dropoff_location_id != ''
 
 -- dbt run --select stg_taxi_trips

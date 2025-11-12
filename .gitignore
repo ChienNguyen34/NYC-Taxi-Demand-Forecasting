@@ -45,6 +45,11 @@ ENV/
 env.bak/
 venv.bak/
 
+# Streaming simulation logs and temp files
+streaming_simulation/logs/
+streaming_simulation/temp/
+streaming_simulation/*.log
+
 # IDEs
 .vscode/
 .idea/
