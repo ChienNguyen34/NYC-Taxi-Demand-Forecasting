@@ -1,6 +1,4 @@
-# dbt and BigQuery
-dbt-bigquery==1.10.2
-dbt-core==1.11.0
+
 
 # Google Cloud
 google-cloud-bigquery==3.11.4
