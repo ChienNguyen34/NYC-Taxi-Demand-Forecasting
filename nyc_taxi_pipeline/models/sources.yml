@@ -16,3 +16,10 @@ sources:
     tables:
       - name: gsod2021 # Dùng dữ liệu thời tiết năm 2021
         identifier: gsod2021
+
+  - name: raw_data # Nguồn dữ liệu thô do chúng ta tự tạo
+    # `database` và `schema` sẽ được lấy từ file profiles.yml
+    # Tuy nhiên, để rõ ràng, chúng ta có thể khai báo schema ở đây
+    schema: raw_data 
+    tables:
+      - name: weather_api_data # Bảng chứa dữ liệu streaming từ API
