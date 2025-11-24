@@ -134,7 +134,7 @@ def insert_weather_data_to_bq(cloud_event):
 
 
 # ============================================================================
-# TAXI STREAMING FUNCTIONS
+# TAXI STREAMING FUNCTIONS ADDED
 # ============================================================================
 
 @functions_framework.http
