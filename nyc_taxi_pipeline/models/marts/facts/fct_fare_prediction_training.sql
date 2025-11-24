@@ -19,7 +19,7 @@ agg_hourly_demand AS (
 )
 SELECT
     -- Target variable
-    trips.fare_amount,
+    trips.fare_amount * (1 + (RAND() - 0.5) * 2 * 0.1) AS fare_amount,
 
     -- Trip features
     trips.passenger_count,
