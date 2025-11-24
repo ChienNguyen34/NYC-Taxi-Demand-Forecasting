@@ -4,10 +4,9 @@ select
     -- IDs (Tất cả đều là STRING trong nguồn)
     cast(vendor_id as string) as vendor_id,
     
-    -- Timestamps
-    cast(pickup_datetime as timestamp) as picked_up_at,
-    cast(dropoff_datetime as timestamp) as dropped_off_at,
-    
+    -- Timestamps - Shift +4 years (1461 days)
+    TIMESTAMP_ADD(CAST(pickup_datetime AS TIMESTAMP), INTERVAL 1461 DAY) as picked_up_at,
+    TIMESTAMP_ADD(CAST(dropoff_datetime AS TIMESTAMP), INTERVAL 1461 DAY) as dropped_off_at,
     -- Trip info
     cast(passenger_count as int64) as passenger_count,
     cast(trip_distance as numeric) as trip_distance,
@@ -37,9 +36,9 @@ where
     trip_distance > 0
     and passenger_count > 0
     and total_amount > 0
-    -- Filter for actual 2021 data (remove weird future dates)
-    and pickup_datetime >= '2021-01-01'
-    and pickup_datetime < '2021-04-01'  -- Q1 2021 for demo
+    -- Filter for actual 2025 data (remove weird future dates)
+    and pickup_datetime >= '2021-09-23'  -- Data từ 23/9/2021
+    and pickup_datetime < '2021-11-24'   -- Đến hết 23/11/2021
     -- Filter valid location IDs (not null/empty)
     and pickup_location_id is not null
     and dropoff_location_id is not null
