@@ -1,11 +1,11 @@
 -- models/marts/dimensions/dim_datetime.sql
 
--- 1. Tạo một bảng lịch 2021
+-- 1. Tạo một bảng lịch 2025
 with calendar as (
     select
         date_day
     from
-        unnest(generate_date_array('2021-01-01', '2021-12-31', interval 1 day)) as date_day
+        unnest(generate_date_array('2025-01-01', '2025-12-31', interval 1 day)) as date_day
 ),
 
 -- 2. Join với các sự kiện
@@ -15,7 +15,7 @@ events as (
 
 -- 3. Tạo các thuộc tính thời gian
 select
-    -- Khóa chính (ví dụ: 20210101)
+    -- Khóa chính (ví dụ: 20250101)
     format_date('%Y%m%d', date_day) as date_id,
     date_day as full_date,
     extract(year from date_day) as year,
