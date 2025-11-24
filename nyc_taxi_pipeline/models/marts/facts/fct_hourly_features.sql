@@ -7,8 +7,8 @@ WITH enriched_data AS (
     dim_dt.month,
     dim_dt.quarter,
     dim_dt.day_of_year
-  FROM `facts.agg_hourly_demand_h3` agg
-  LEFT JOIN `dimensions.dim_datetime` dim_dt
+  FROM {{ ref('agg_hourly_demand_h3') }} agg
+  LEFT JOIN {{ ref('dim_datetime') }} dim_dt
     ON DATE(agg.timestamp_hour) = dim_dt.full_date
 ),
 
@@ -95,7 +95,8 @@ SELECT
 FROM lag_features l
 
 -- Chỉ lấy data có đủ lag features (bỏ 168 giờ = 1 tuần đầu)
-WHERE l.timestamp_hour >= TIMESTAMP_ADD(
-    (SELECT MIN(timestamp_hour) FROM enriched_data),
-    INTERVAL 168 HOUR
-)
+-- Tạm comment để có đủ data train
+-- WHERE l.timestamp_hour >= TIMESTAMP_ADD(
+--     (SELECT MIN(timestamp_hour) FROM enriched_data),
+--     INTERVAL 168 HOUR
+-- )

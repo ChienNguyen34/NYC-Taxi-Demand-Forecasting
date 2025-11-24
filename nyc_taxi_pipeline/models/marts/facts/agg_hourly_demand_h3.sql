@@ -58,8 +58,8 @@ left join dim_datetime
 left join dim_weather
     on trips.weather_date = dim_weather.weather_date
 
-where
-    dim_weather.weather_date is not null -- Lọc bỏ những ngày không có dữ liệu thời tiết
+-- where
+--     dim_weather.weather_date is not null -- Tạm bỏ filter để có đủ data train model
 
 group by
     1, 2 -- Group by pickup_h3_id, timestamp_hour
