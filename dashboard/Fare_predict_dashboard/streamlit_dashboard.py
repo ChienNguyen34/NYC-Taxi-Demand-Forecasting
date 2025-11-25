@@ -95,14 +95,14 @@ def get_live_weather_data(_client):
 
 @st.cache_data(ttl=3600)
 def get_high_demand_zones(_client):
-    """Queries forecast data and converts H3 IDs to GeoJSON polygons."""
+    """Queries actual demand data and converts H3 IDs to GeoJSON polygons."""
     query = f"""
         SELECT
             pickup_h3_id,
-            predicted_total_pickups AS total_pickups_forecast
-        FROM `{HOURLY_FORECAST_TABLE}`
+            total_pickups AS total_pickups_forecast
+        FROM `{GCP_PROJECT_ID}.facts.fct_hourly_features`
         WHERE timestamp_hour >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 1 HOUR)
-        ORDER BY predicted_total_pickups DESC
+        ORDER BY total_pickups DESC
         LIMIT 200 # Get top 200 high-demand hexes
     """
     features = []
@@ -128,16 +128,16 @@ def get_high_demand_zones(_client):
 
 @st.cache_data(ttl=3600)
 def get_hourly_demand_by_zone(_client):
-    """Get hourly demand forecast for all zones with timestamps."""
+    """Get hourly demand data from features table (actual pickups)."""
     query = f"""
         SELECT
             pickup_h3_id,
             timestamp_hour,
-            predicted_total_pickups,
+            total_pickups as predicted_total_pickups,
             EXTRACT(HOUR FROM timestamp_hour) as hour
-        FROM `{HOURLY_FORECAST_TABLE}`
-        WHERE timestamp_hour >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
-            AND timestamp_hour <= TIMESTAMP_ADD(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
+        FROM `{GCP_PROJECT_ID}.facts.fct_hourly_features`
+        WHERE timestamp_hour >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
+            AND timestamp_hour <= CURRENT_TIMESTAMP()
         ORDER BY pickup_h3_id, timestamp_hour
     """
     try:
@@ -148,19 +148,26 @@ def get_hourly_demand_by_zone(_client):
         return pd.DataFrame()
 
 def get_color_for_demand(demand, max_demand):
-    """Returns color based on demand level (green -> yellow -> red)."""
+    """Returns bright color based on demand level."""
     if max_demand == 0:
-        return '#90EE90'
+        return '#FFD700'  # Gold
     
     ratio = demand / max_demand
     if ratio < 0.3:
-        return '#90EE90'  # Light green
+        return '#FF00FF'  # Magenta (bright purple)
     elif ratio < 0.5:
-        return '#FFFF00'  # Yellow
+        return '#FFFF00'  # Bright yellow
     elif ratio < 0.7:
-        return '#FFA500'  # Orange
+        return '#FF8C00'  # Dark orange
     else:
-        return '#FF4500'  # Red-orange
+        return '#FF0000'  # Bright red
+
+def get_circle_radius(demand, max_demand, min_radius=250, max_radius=600):
+    """Calculate circle radius based on demand level."""
+    if max_demand == 0:
+        return min_radius
+    ratio = demand / max_demand
+    return min_radius + (max_radius - min_radius) * ratio
 
 def predict_fare_from_bqml(_client, pickup_loc, dropoff_loc):
     """Constructs a query to call the BQML model for fare prediction."""
@@ -242,7 +249,6 @@ def predict_fare_from_bqml(_client, pickup_loc, dropoff_loc):
 # ======================================================================================
 
 st.title("🚕 NYC Real-time Taxi Fare Prediction")
-st.markdown("### A beautiful UI to demonstrate the fare prediction use case")
 
 # Add tabs for different views
 tab1, tab2 = st.tabs(["🗺️ Fare Prediction", "📊 Hourly Demand Heatmap"])
@@ -339,7 +345,15 @@ with tab2:
     st.markdown("Select an hour to see predicted demand across NYC zones")
     
     # Load hourly demand data
-    hourly_data = get_hourly_demand_by_zone(client)
+    with st.spinner("Loading demand data..."):
+        hourly_data = get_hourly_demand_by_zone(client)
+    
+    # Debug info
+    if not hourly_data.empty:
+        st.info(f"✅ Loaded {len(hourly_data)} records from {hourly_data['timestamp_hour'].min()} to {hourly_data['timestamp_hour'].max()}")
+    else:
+        st.error("❌ No data loaded from fct_hourly_features. Check if table exists and has recent data.")
+        st.stop()
     
     if not hourly_data.empty:
         # Hour selector
@@ -354,8 +368,12 @@ with tab2:
             format_func=lambda x: f"{int(x):02d}:00"
         )
         
-        # Filter data for selected hour
+        # Filter data for selected hour and aggregate by zone (in case of duplicates)
         hour_data = hourly_data[hourly_data['hour'] == selected_hour].copy()
+        hour_data = hour_data.groupby('pickup_h3_id', as_index=False).agg({
+            'predicted_total_pickups': 'sum',
+            'timestamp_hour': 'max'
+        })
         
         if not hour_data.empty:
             # Stats
@@ -370,53 +388,113 @@ with tab2:
             st.markdown("---")
             
             # Create map with color-coded demand
+            st.info(f"Rendering top {min(5000, len(hour_data))} zones out of {len(hour_data)} total zones for hour {int(selected_hour):02d}:00")
+            
             NYC_CENTER = [40.7128, -74.0060]
             demand_map = folium.Map(location=NYC_CENTER, zoom_start=11)
             
             max_demand = hour_data['predicted_total_pickups'].max()
             
-            for _, row in hour_data.iterrows():
+            # Limit to top zones to avoid rendering too many polygons
+            top_zones_to_show = hour_data.nlargest(min(5000, len(hour_data)), 'predicted_total_pickups')
+            
+            zones_rendered = 0
+            errors = []
+            for idx, row in top_zones_to_show.iterrows():
                 try:
-                    boundary = h3.cell_to_boundary(row['pickup_h3_id'])
-                    geo_boundary = [[lng, lat] for lat, lng in boundary]
+                    h3_id = row['pickup_h3_id']
+                    
+                    # Check if it's custom format (h3_res8_LAT_LON) instead of real H3
+                    if h3_id.startswith('h3_res8_'):
+                        # Extract lat/lon from custom format: h3_res8_-73966_40769
+                        parts = h3_id.replace('h3_res8_', '').split('_')
+                        if len(parts) == 2:
+                            lon = float(parts[0]) / 1000.0  # -73966 -> -73.966
+                            lat = float(parts[1]) / 1000.0  # 40769 -> 40.769
+                            # Convert to real H3
+                            h3_id = h3.latlng_to_cell(lat, lon, 8)
+                    
+                    # Get center point for circle
+                    center = h3.cell_to_latlng(h3_id)
                     
                     demand = row['predicted_total_pickups']
                     color = get_color_for_demand(demand, max_demand)
+                    radius = get_circle_radius(demand, max_demand)
                     
-                    folium.Polygon(
-                        locations=[[lat, lng] for lng, lat in geo_boundary],
+                    # Draw circle with single color (no border)
+                    folium.Circle(
+                        location=[center[0], center[1]],
+                        radius=radius,
                         color=color,
                         fill=True,
                         fillColor=color,
-                        fillOpacity=0.6,
+                        fillOpacity=0.8,
                         weight=1,
-                        popup=folium.Popup(f"<b>Zone:</b> {row['pickup_h3_id'][:8]}...<br><b>Demand:</b> {demand:.0f} trips", max_width=200)
+                        opacity=0.8,
+                        popup=folium.Popup(f"<b>Demand:</b> {demand:.0f} trips<br><b>Zone:</b> {h3_id[:10]}...", max_width=400)
                     ).add_to(demand_map)
-                except:
+                    zones_rendered += 1
+                except Exception as e:
+                    if len(errors) < 5:  # Show first 5 errors
+                        errors.append(f"Zone {row['pickup_h3_id']}: {str(e)}")
                     continue
             
+            if errors:
+                st.error(f"❌ Errors rendering zones:\n" + "\n".join(errors))
+            
+            st.success(f"✅ Successfully rendered {zones_rendered} zones on map")
             st_folium(demand_map, width='100%', height=600)
             
             st.markdown("---")
             
             # Legend
-            st.markdown("**Demand Level Legend:**")
+            st.markdown("**Demand Level Legend (Size & Color):**")
             legend_cols = st.columns(4)
             with legend_cols[0]:
-                st.markdown("🟢 **Low** (< 30%)")
+                st.markdown("🟣 **Low** (< 30%) - Small circles")
             with legend_cols[1]:
-                st.markdown("🟡 **Medium** (30-50%)")
+                st.markdown("🟡 **Medium** (30-50%) - Medium circles")
             with legend_cols[2]:
-                st.markdown("🟠 **High** (50-70%)")
+                st.markdown("🟠 **High** (50-70%) - Large circles")
             with legend_cols[3]:
-                st.markdown("🔴 **Very High** (> 70%)")
+                st.markdown("🔴 **Very High** (> 70%) - Largest circles")
             
             # Top zones table
             st.markdown("---")
             st.subheader("Top 10 High Demand Zones")
-            top_zones = hour_data.nlargest(10, 'predicted_total_pickups')[['pickup_h3_id', 'predicted_total_pickups']]
-            top_zones.columns = ['H3 Zone ID', 'Predicted Pickups']
-            st.dataframe(top_zones, use_container_width=True, hide_index=True)
+            top_zones = hour_data.nlargest(10, 'predicted_total_pickups')[['pickup_h3_id', 'predicted_total_pickups']].copy()
+            
+            # Get location names from dim_location
+            location_query = f"""
+                SELECT DISTINCT
+                    h3_id,
+                    zone_name,
+                    borough
+                FROM `{GCP_PROJECT_ID}.dimensions.dim_location`
+                WHERE h3_id IN UNNEST(@h3_ids)
+            """
+            from google.cloud.bigquery import ArrayQueryParameter
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    ArrayQueryParameter("h3_ids", "STRING", top_zones['pickup_h3_id'].tolist())
+                ]
+            )
+            try:
+                location_df = client.query(location_query, job_config=job_config).to_dataframe()
+                # Merge location names
+                top_zones = top_zones.merge(location_df, left_on='pickup_h3_id', right_on='h3_id', how='left')
+                top_zones['location'] = top_zones.apply(
+                    lambda row: f"{row['zone_name']}, {row['borough']}" if pd.notna(row['zone_name']) else 'Unknown Location',
+                    axis=1
+                )
+                top_zones = top_zones[['location', 'predicted_total_pickups']]
+                top_zones.columns = ['Location', 'Predicted Pickups']
+            except Exception as e:
+                # Fallback if location lookup fails
+                st.warning(f"Could not load location names: {e}")
+                top_zones.columns = ['H3 Zone ID', 'Predicted Pickups']
+            
+            st.dataframe(top_zones, width='stretch', hide_index=True)
         else:
             st.warning(f"No data available for hour {selected_hour}")
     else:
