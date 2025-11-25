@@ -48,7 +48,6 @@ INNER JOIN
                 timestamp_hour >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
                 AND pickups_1h_ago IS NOT NULL
                 AND pickups_24h_ago IS NOT NULL
-                AND pickups_1week_ago IS NOT NULL
         )
     ) p
 ON f.pickup_h3_id = p.pickup_h3_id

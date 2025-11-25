@@ -6,9 +6,9 @@ WITH historical_trips AS (
         -- IDs (Tất cả đều là STRING trong nguồn)
         cast(vendor_id as string) as vendor_id,
         
-        -- Timestamps - Shift +4 years (1461 days)
-        TIMESTAMP_ADD(CAST(pickup_datetime AS TIMESTAMP), INTERVAL 1461 DAY) as picked_up_at,
-        TIMESTAMP_ADD(CAST(dropoff_datetime AS TIMESTAMP), INTERVAL 1461 DAY) as dropped_off_at,
+        -- Timestamps - Shift to 2025 full year (1462 days from 2021)
+        TIMESTAMP_ADD(CAST(pickup_datetime AS TIMESTAMP), INTERVAL 1462 DAY) as picked_up_at,
+        TIMESTAMP_ADD(CAST(dropoff_datetime AS TIMESTAMP), INTERVAL 1462 DAY) as dropped_off_at,
         
         -- Trip info
         cast(passenger_count as int64) as passenger_count,
@@ -38,8 +38,8 @@ WITH historical_trips AS (
         trip_distance > 0
         AND passenger_count > 0
         AND total_amount > 0
-        AND pickup_datetime >= '2021-09-23'
-        AND pickup_datetime < '2021-11-24'
+        AND pickup_datetime >= '2021-01-01'  -- Start from beginning of year
+        AND pickup_datetime < '2021-11-24'   -- Keep streaming cutoff date
         AND pickup_location_id IS NOT NULL
         AND dropoff_location_id IS NOT NULL
         AND pickup_location_id != ''

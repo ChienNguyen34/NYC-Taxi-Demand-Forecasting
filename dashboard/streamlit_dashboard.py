@@ -4,15 +4,17 @@ import folium
 from streamlit_folium import st_folium
 import pandas as pd
 from google.cloud import bigquery
-from datetime import datetime
+from datetime import datetime, date, timedelta
 import h3
+import plotly.express as px
+from streamlit_plotly_events import plotly_events
 
 # ======================================================================================
 # Page Configuration
 # ======================================================================================
 
 st.set_page_config(
-    page_title="NYC Taxi Fare Prediction",
+    page_title="NYC Taxi Analytics Dashboard",
     page_icon="🚕",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -128,14 +130,14 @@ def get_high_demand_zones(_client):
 
 @st.cache_data(ttl=3600)
 def get_hourly_demand_by_zone(_client):
-    """Get hourly demand data from features table (actual pickups)."""
+    """Get hourly demand forecast data from ML predictions table."""
     query = f"""
         SELECT
             pickup_h3_id,
             timestamp_hour,
-            total_pickups as predicted_total_pickups,
+            predicted_total_pickups,
             EXTRACT(HOUR FROM timestamp_hour) as hour
-        FROM `{GCP_PROJECT_ID}.facts.fct_hourly_features`
+        FROM `{GCP_PROJECT_ID}.ml_predictions.hourly_demand_forecast`
         WHERE timestamp_hour >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
             AND timestamp_hour <= CURRENT_TIMESTAMP()
         ORDER BY pickup_h3_id, timestamp_hour
@@ -144,7 +146,7 @@ def get_hourly_demand_by_zone(_client):
         df = _client.query(query).to_dataframe()
         return df
     except Exception as e:
-        st.error(f"Error loading hourly demand: {e}")
+        st.error(f"Error loading hourly demand forecast: {e}")
         return pd.DataFrame()
 
 def get_color_for_demand(demand, max_demand):
@@ -248,10 +250,13 @@ def predict_fare_from_bqml(_client, pickup_loc, dropoff_loc):
 # Main UI Layout
 # ======================================================================================
 
-st.title("🚕 NYC Real-time Taxi Fare Prediction")
+st.title("🚕 NYC Taxi Analytics Dashboard")
 
-# Add tabs for different views
-tab1, tab2 = st.tabs(["🗺️ Fare Prediction", "📊 Hourly Demand Heatmap"])
+# Add tabs for different use cases
+# Tab 1: Real-time fare prediction with map
+# Tab 2: Hourly demand forecast visualization
+# Tab 3: Admin trip analysis with interactive scatter plot
+tab1, tab2, tab3 = st.tabs(["🗺️ Fare Prediction", "📊 Hourly Demand Heatmap", "📈 Trip Analysis"])
 
 with tab1:
     map_col, controls_col = st.columns([2, 1])
@@ -342,17 +347,18 @@ with tab1:
 
 with tab2:
     st.subheader("📊 Hourly Demand Forecast by Zone")
-    st.markdown("Select an hour to see predicted demand across NYC zones")
+    st.markdown("Select an hour to see **predicted demand** across NYC zones (ML-generated forecasts)")
     
     # Load hourly demand data
-    with st.spinner("Loading demand data..."):
+    with st.spinner("Loading demand forecasts..."):
         hourly_data = get_hourly_demand_by_zone(client)
     
     # Debug info
     if not hourly_data.empty:
-        st.info(f"✅ Loaded {len(hourly_data)} records from {hourly_data['timestamp_hour'].min()} to {hourly_data['timestamp_hour'].max()}")
+        st.info(f"✅ Loaded {len(hourly_data)} forecast records from {hourly_data['timestamp_hour'].min()} to {hourly_data['timestamp_hour'].max()}")
     else:
-        st.error("❌ No data loaded from fct_hourly_features. Check if table exists and has recent data.")
+        st.error("❌ No forecast data loaded from hourly_demand_forecast. The ML pipeline may need to run first.")
+        st.info("💡 Tip: Run `gcloud workflows run daily-ml-pipeline --location=us-central1` to generate forecasts")
         st.stop()
     
     if not hourly_data.empty:
@@ -498,5 +504,204 @@ with tab2:
         else:
             st.warning(f"No data available for hour {selected_hour}")
     else:
+        st.error("No hourly demand data available. Check if the forecast table has data.")
+
+# ======================================================================================
+# TAB 3: ADMIN TRIP ANALYSIS
+# ======================================================================================
+# This tab provides interactive analysis of trip data including:
+# - Scatter plot showing relationship between fare and distance
+# - Color-coded by day of week to identify patterns
+# - Click interaction to view detailed trip information
+# - Date range and sample size filters
+
+with tab3:
+    st.subheader("📈 Admin Dashboard: Trip Analysis")
+    st.markdown("""
+        Analyze the relationship between **fare amount** and **trip distance**.
+        Filter by date range and number of trips, then click points to see details.
+    """)
+
+    # --- Data Filter Controls ---
+    # Allow admin to customize the analysis scope
+    st.header("Data Filters")
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        # Number of trips to analyze (prevents overwhelming the UI)
+        num_trips = st.number_input(
+            "Number of Trips", 
+            min_value=10, 
+            max_value=5000, 
+            value=500, 
+            step=50,
+            help="How many recent trips to display in the analysis"
+        )
+    
+    with col2:
+        # Start date for analysis - default to recent data
+        start_date = st.date_input(
+            "Start Date", 
+            value=date.today() - timedelta(days=30),
+            help="Beginning of the date range to analyze"
+        )
+    
+    with col3:
+        # End date for analysis
+        end_date = st.date_input(
+            "End Date", 
+            value=date.today(),
+            help="End of the date range to analyze"
+        )
+
+    # --- Load and Process Data Button ---
+    # Only query BigQuery when user explicitly requests it (saves costs)
+    if st.button("🔍 Load and Analyze Data", type="primary"):
+        st.subheader(f"Analyzing {num_trips} trips from {start_date} to {end_date}")
+
+        # Query to fetch trip data from the facts table
+        # Filters:
+        # 1. trip_distance > 0 (exclude invalid trips)
+        # 2. fare_amount > 0 (exclude invalid fares)
+        # 3. Date range filter on pickup time
+        # ORDER BY RAND() ensures random sampling across the date range
+        query = f"""
+        SELECT
+            trip_id,
+            picked_up_at,
+            dropped_off_at,
+            passenger_count,
+            trip_distance,
+            fare_amount,
+            extra_amount,
+            mta_tax,
+            tip_amount,
+            tolls_amount,
+            improvement_surcharge,
+            airport_fee,
+            total_amount
+        FROM
+            `{GCP_PROJECT_ID}.facts.fct_trips`
+        WHERE
+            trip_distance > 0 
+            AND fare_amount > 0
+            AND DATE(picked_up_at) >= '{start_date.isoformat()}'
+            AND DATE(picked_up_at) <= '{end_date.isoformat()}'
+        ORDER BY RAND()
+        LIMIT {num_trips}
+        """
+
+        try:
+            with st.spinner("Loading trip data from BigQuery..."):
+                # Execute query and convert to pandas dataframe
+                df = client.query(query).to_dataframe()
+
+            if not df.empty:
+                # Debug info: Show data shape to verify loading
+                st.info(f"✅ Loaded {len(df)} trips successfully")
+                
+                # Feature engineering: Add day of week for pattern analysis
+                # This helps identify if certain days have different fare/distance patterns
+                if 'picked_up_at' in df.columns:
+                    df['day_of_week'] = df['picked_up_at'].dt.day_name()
+                else:
+                    st.warning("⚠️ Column 'picked_up_at' not found. Cannot create 'day_of_week'.")
+                    st.session_state['admin_df'] = pd.DataFrame()
+                    st.stop()
+
+                # Store in session state so data persists across interactions
+                # This prevents re-querying BigQuery every time user clicks a point
+                st.session_state['admin_df'] = df
+                st.success(f"✅ Data processed and ready for analysis")
+
+            else:
+                st.warning("⚠️ No trip data found for the selected criteria. Try adjusting date range.")
+                st.session_state['admin_df'] = pd.DataFrame()
+        
+        except Exception as e:
+            st.error(f"❌ Error loading data from BigQuery: {e}")
+            st.info("💡 Make sure the fct_trips table exists and has data in the date range.")
+
+    # --- Interactive Visualization Section ---
+    # This section renders even after button click (outside button block)
+    # so the plot persists and remains interactive
+    if 'admin_df' in st.session_state and not st.session_state['admin_df'].empty:
+        df = st.session_state['admin_df']
+
+        st.markdown("---")
+        st.subheader("📊 Interactive Scatter Plot: Fare vs Distance")
+        
+        # Create interactive Plotly scatter plot
+        # Features:
+        # - X-axis: trip_distance (miles)
+        # - Y-axis: fare_amount (dollars)
+        # - Color: day_of_week (helps identify weekly patterns)
+        # - Hover: Shows additional trip details
+        # - Click: Triggers detail view below
+        fig = px.scatter(
+            df, 
+            x="trip_distance", 
+            y="fare_amount",
+            color="day_of_week",  # Color code by day to see patterns
+            custom_data=["trip_id"],  # Pass trip_id for click event handling
+            hover_data={
+                "trip_id": False,  # Hide from hover (shown in custom_data)
+                "picked_up_at": True,  # Show pickup time
+                "passenger_count": True,  # Show number of passengers
+                "total_amount": ':.2f',  # Show total with 2 decimals
+                "day_of_week": True  # Show day name
+            },
+            title="Trip Fare ($) vs Trip Distance (miles) - Color coded by Day of Week",
+            labels={
+                "trip_distance": "Distance (miles)",
+                "fare_amount": "Fare ($)",
+                "day_of_week": "Day of Week"
+            },
+            template="plotly_white",  # Clean white background
+            height=600  # Taller plot for better visibility
+        )
+
+        # Render the plot with click event handling
+        # streamlit_plotly_events captures click events and returns selected point data
+        selected_points = plotly_events(
+            fig, 
+            click_event=True,  # Enable click detection
+            hover_event=False,  # Disable hover events (not needed)
+            key="admin_trip_plot"  # Unique key for this plot
+        )
+
+        # --- Selected Trip Detail View ---
+        # When user clicks a point, show full trip details below the plot
+        st.markdown("---")
+        st.subheader("🔍 Selected Trip Details")
+        
+        if selected_points:
+            # Extract trip_id from the clicked point
+            # selected_points[0] = first clicked point
+            # ['customdata'][0] = trip_id (first item in custom_data)
+            clicked_trip_id = selected_points[0]['customdata'][0]
+            
+            # Filter dataframe to get the full row for this trip
+            selected_row = df[df['trip_id'] == clicked_trip_id]
+            
+            if not selected_row.empty:
+                # Display all columns for the selected trip in a nice table
+                st.dataframe(
+                    selected_row, 
+                    use_container_width=True,  # Full width table
+                    hide_index=True  # Hide pandas index column
+                )
+            else:
+                st.warning("⚠️ Could not find details for the selected trip.")
+        else:
+            # Instructions when no point is selected
+            st.info("💡 Click on any point in the scatter plot above to view full trip details here.")
+    
+    elif 'admin_df' in st.session_state and st.session_state['admin_df'].empty:
+        # Data was loaded but empty
+        st.info("ℹ️ No data loaded yet. Click 'Load and Analyze Data' button above to start.")
+    else:
+        # Initial state - no data loaded
+        st.info("ℹ️ Configure filters above and click 'Load and Analyze Data' to begin analysis.")
         st.error("No hourly demand data available. Check if the forecast table has data.")
 
