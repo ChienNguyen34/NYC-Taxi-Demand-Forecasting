@@ -9,8 +9,7 @@ SELECT
     f.pickup_h3_id,
     f.total_pickups AS actual_pickups,
     p.predicted_total_pickups,
-    p.predicted_total_pickups_lower_bound,
-    p.predicted_total_pickups_upper_bound,
+    -- Note: BOOSTED_TREE_REGRESSOR doesn't provide confidence intervals
     -- Include key features for analysis
     f.avg_temp_celsius,
     f.had_rain,
@@ -20,7 +19,7 @@ FROM
     `nyc-taxi-project-477115.facts.fct_hourly_features` f
 INNER JOIN
     ML.PREDICT(
-        MODEL `nyc-taxi-project-477115.ml_predictions.timeseries_hotspot_model`,
+        MODEL `nyc-taxi-project-477115.ml_models.timeseries_hotspot_model`,
         (
             SELECT
                 pickup_h3_id,

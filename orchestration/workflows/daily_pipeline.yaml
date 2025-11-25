@@ -1,0 +1,229 @@
+# workflows/daily_pipeline.yaml
+# Cloud Workflow to orchestrate end-to-end pipeline
+# Schedule: Daily at 6:00 AM EST
+# Flow: dbt run → Train models → Generate predictions
+
+main:
+  steps:
+    - log_start:
+        call: sys.log
+        args:
+          text: "Starting daily data pipeline"
+          severity: INFO
+
+    # Step 1: Run dbt transformations via Cloud Build trigger
+    - run_dbt_build:
+        try:
+          call: http.post
+          args:
+            url: https://cloudbuild.googleapis.com/v1/projects/nyc-taxi-project-477115/locations/us-central1/builds
+            auth:
+              type: OAuth2
+            body:
+              steps:
+                - name: gcr.io/cloud-builders/git
+                  args:
+                    - clone
+                    - https://github.com/ChienNguyen34/NYC-Taxi-Demand-Forecasting.git
+                    - .
+                - name: python:3.11-slim
+                  entrypoint: bash
+                  args:
+                    - -c
+                    - |
+                      cd nyc_taxi_pipeline
+                      pip install --quiet dbt-core dbt-bigquery
+                      dbt deps --profiles-dir .
+                      dbt run --profiles-dir . --full-refresh
+              timeout: 900s
+              options:
+                logging: CLOUD_LOGGING_ONLY
+                machineType: E2_MEDIUM
+          result: dbt_build_result
+        except:
+          as: e
+          steps:
+            - log_dbt_error:
+                call: sys.log
+                args:
+                  text: ${e}
+                  severity: ERROR
+            - return_dbt_failure:
+                return:
+                  status: FAILED
+                  step: dbt_build
+                  error: ${e}
+
+    - log_dbt_success:
+        call: sys.log
+        args:
+          text: dbt models refreshed successfully
+          severity: INFO
+
+    # Step 2: Train demand forecast model (BOOSTED_TREE_REGRESSOR)
+    - train_demand_model:
+        try:
+          call: googleapis.bigquery.v2.jobs.query
+          args:
+            projectId: nyc-taxi-project-477115
+            body:
+              query: |
+                CREATE OR REPLACE MODEL `nyc-taxi-project-477115.ml_models.timeseries_hotspot_model`
+                OPTIONS(
+                    model_type='BOOSTED_TREE_REGRESSOR',
+                    input_label_cols=['total_pickups'],
+                    data_split_method='AUTO_SPLIT',
+                    max_iterations=50,
+                    early_stop=TRUE
+                )
+                AS
+                SELECT
+                    total_pickups,
+                    pickup_h3_id,
+                    EXTRACT(HOUR FROM timestamp_hour) AS hour_of_day,
+                    EXTRACT(DAYOFWEEK FROM timestamp_hour) AS day_of_week,
+                    pickups_1h_ago,
+                    pickups_24h_ago,
+                    pickups_1week_ago,
+                    avg_pickups_7h,
+                    avg_pickups_24h,
+                    avg_temp_celsius,
+                    total_precipitation_mm,
+                    had_rain,
+                    had_snow,
+                    is_weekend,
+                    is_holiday,
+                    pickups_change_24h,
+                    rain_during_rush_hour,
+                    month,
+                    quarter,
+                    day_of_year
+                FROM `nyc-taxi-project-477115.facts.fct_hourly_features`
+                WHERE pickups_1h_ago IS NOT NULL
+              useLegacySql: false
+              timeoutMs: 600000
+          result: demand_model_result
+        except:
+          as: e
+          steps:
+            - log_demand_error:
+                call: sys.log
+                args:
+                  text: Demand model training failed
+                  severity: ERROR
+    
+    - log_demand_success:
+        call: sys.log
+        args:
+          text: Demand forecast model trained successfully
+          severity: INFO
+    # Step 3: Train fare model
+    - train_fare_model:
+        try:
+          call: googleapis.bigquery.v2.jobs.query
+          args:
+            projectId: nyc-taxi-project-477115
+            body:
+              query: |
+                CREATE OR REPLACE MODEL `nyc-taxi-project-477115.ml_models.fare_estimation_model`
+                OPTIONS(
+                  model_type='BOOSTED_TREE_REGRESSOR',
+                  input_label_cols=['fare_amount']
+                ) AS
+                SELECT
+                  *
+                FROM
+                  `nyc-taxi-project-477115.facts.fct_fare_prediction_training`;
+              useLegacySql: false
+              timeoutMs: 600000
+          result: fare_model_result
+        except:
+          as: e
+          steps:
+            - log_fare_error:
+                call: sys.log
+                args:
+                  text: Fare predict model training failed
+                  severity: ERROR
+    
+    - log_fare_success:
+        call: sys.log
+        args:
+          text: Fare predict model trained successfully
+          severity: INFO
+
+    # Step 4: Generate demand predictions
+    - generate_predictions:
+        try:
+          call: googleapis.bigquery.v2.jobs.query
+          args:
+            projectId: nyc-taxi-project-477115
+            body:
+              query: |
+                CREATE OR REPLACE TABLE `nyc-taxi-project-477115.ml_predictions.hourly_demand_forecast`
+                AS
+                SELECT 
+                    f.timestamp_hour,
+                    f.pickup_h3_id,
+                    f.total_pickups AS actual_pickups,
+                    p.predicted_total_pickups,
+                    f.avg_temp_celsius,
+                    f.had_rain,
+                    f.is_weekend,
+                    f.is_holiday
+                FROM `nyc-taxi-project-477115.facts.fct_hourly_features` f
+                INNER JOIN ML.PREDICT(
+                    MODEL `nyc-taxi-project-477115.ml_models.timeseries_hotspot_model`,
+                    (
+                        SELECT
+                            pickup_h3_id,
+                            EXTRACT(HOUR FROM timestamp_hour) AS hour_of_day,
+                            EXTRACT(DAYOFWEEK FROM timestamp_hour) AS day_of_week,
+                            pickups_1h_ago,
+                            pickups_24h_ago,
+                            pickups_1week_ago,
+                            avg_pickups_7h,
+                            avg_pickups_24h,
+                            avg_temp_celsius,
+                            total_precipitation_mm,
+                            had_rain,
+                            had_snow,
+                            is_weekend,
+                            is_holiday,
+                            pickups_change_24h,
+                            rain_during_rush_hour,
+                            month,
+                            quarter,
+                            day_of_year
+                        FROM `nyc-taxi-project-477115.facts.fct_hourly_features`
+                        WHERE timestamp_hour >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
+                            AND pickups_1h_ago IS NOT NULL
+                    )
+                ) p
+                ON f.pickup_h3_id = p.pickup_h3_id
+                    AND EXTRACT(HOUR FROM f.timestamp_hour) = p.hour_of_day
+              useLegacySql: false
+              timeoutMs: 300000
+          result: forecast_result
+        except:
+          as: e
+          steps:
+            - log_forecast_error:
+                call: sys.log
+                args:
+                  text: Forecast generation failed
+                  severity: ERROR
+    
+    - log_forecast_success:
+        call: sys.log
+        args:
+          text: Demand forecast generated successfully
+          severity: INFO
+    
+    # Step 5: Return summary
+    - return_result:
+        return:
+          status: SUCCESS
+          models_trained: 1
+          predictions_generated: true
+

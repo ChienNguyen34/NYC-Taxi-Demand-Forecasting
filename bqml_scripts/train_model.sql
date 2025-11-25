@@ -1,7 +1,7 @@
 -- bqml_scripts/train_model.sql
 -- File này sẽ được gọi bởi Airflow SAU KHI dbt run thành công.
 
-CREATE OR REPLACE MODEL `nyc-taxi-project-477115.ml_predictions.timeseries_hotspot_model`
+CREATE OR REPLACE MODEL `nyc-taxi-project-477115.ml_models.timeseries_hotspot_model`
 OPTIONS(
     model_type='BOOSTED_TREE_REGRESSOR',
     input_label_cols=['total_pickups'],

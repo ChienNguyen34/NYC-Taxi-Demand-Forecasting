@@ -1,0 +1,69 @@
+# cloudbuild.yaml
+# Cloud Build configuration to run dbt transformations
+# Scheduled to run daily at 4:30 AM EST (before ML pipeline at 6:00 AM)
+
+steps:
+  # Step 1: Install dbt-bigquery
+  - name: 'python:3.11-slim'
+    id: 'install-dbt'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        pip install --quiet dbt-core dbt-bigquery
+        dbt --version
+    dir: 'nyc_taxi_pipeline'
+
+  # Step 2: Run dbt debug (verify connection)
+  - name: 'python:3.11-slim'
+    id: 'dbt-debug'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        pip install --quiet dbt-core dbt-bigquery
+        dbt debug --profiles-dir .
+    dir: 'nyc_taxi_pipeline'
+
+  # Step 3: Install dbt dependencies
+  - name: 'python:3.11-slim'
+    id: 'dbt-deps'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        pip install --quiet dbt-core dbt-bigquery
+        dbt deps --profiles-dir .
+    dir: 'nyc_taxi_pipeline'
+
+  # Step 4: Run dbt models (staging → marts)
+  - name: 'python:3.11-slim'
+    id: 'dbt-run'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        pip install --quiet dbt-core dbt-bigquery
+        dbt run --profiles-dir . --full-refresh
+    dir: 'nyc_taxi_pipeline'
+
+  # Step 5: Test dbt models
+  - name: 'python:3.11-slim'
+    id: 'dbt-test'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        pip install --quiet dbt-core dbt-bigquery
+        dbt test --profiles-dir .
+    dir: 'nyc_taxi_pipeline'
+    # Allow test failures (don't stop the pipeline)
+    allowFailure: true
+
+# Timeout: 15 minutes max
+timeout: 900s
+
+# Options
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: 'E2_MEDIUM'  # Free tier compatible

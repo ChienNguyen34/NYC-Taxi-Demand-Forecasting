@@ -1,0 +1,22 @@
+---
+### How to Run This Demo
+1.  **GCP Authentication:** Make sure your local environment is authenticated to Google Cloud. The simplest way is to run:
+    ```bash
+    gcloud auth application-default login
+    ```
+2.  **Set GCP Project ID:** The application now reads the GCP Project ID from an environment variable.
+    *   **Temporary (for current terminal session):**
+        ```bash
+        $env:GCP_PROJECT_ID="nyc-taxi-project-478411" # For PowerShell
+        export GCP_PROJECT_ID="nyc-taxi-project-478411" # For Bash/Zsh
+        ```
+    *   **(Optional) Persistent setup:** Add the `export GCP_PROJECT_ID="nyc-taxi-project-478411"` line to your shell's profile file (e.g., `.bashrc`, `.zshrc`, `config.fish`, or system environment variables on Windows).
+
+3.  **Install Libraries:** Ensure you have the required libraries installed from the updated `dashboard_requirements.txt`.
+    ```bash
+    pip install -r dashboard_requirements.txt
+    ```
+4.  **Run the App:**
+    ```bash
+    streamlit run streamlit_dashboard.py
+    ```

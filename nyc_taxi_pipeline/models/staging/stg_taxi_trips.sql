@@ -1,48 +1,85 @@
 -- models/staging/stg_taxi_trips.sql
+-- Combines historical data (2021 shifted to 2025) with real-time streaming data
 
-select
-    -- IDs (Tất cả đều là STRING trong nguồn)
-    cast(vendor_id as string) as vendor_id,
-    
-    -- Timestamps - Shift +4 years (1461 days)
-    TIMESTAMP_ADD(CAST(pickup_datetime AS TIMESTAMP), INTERVAL 1461 DAY) as picked_up_at,
-    TIMESTAMP_ADD(CAST(dropoff_datetime AS TIMESTAMP), INTERVAL 1461 DAY) as dropped_off_at,
-    -- Trip info
-    cast(passenger_count as int64) as passenger_count,
-    cast(trip_distance as numeric) as trip_distance,
-    
-    -- Location info (Là STRING trong nguồn)
-    cast(pickup_location_id as string) as pickup_location_id,
-    cast(dropoff_location_id as string) as dropoff_location_id,
-    
-    -- Payment info (Là STRING trong nguồn)
-    cast(rate_code as string) as rate_code_id,
-    cast(payment_type as string) as payment_type_id,
-    
-    -- Numeric payment info (ĐÃ BỔ SUNG CÁC CỘT THIẾU)
-    cast(fare_amount as numeric) as fare_amount,
-    cast(extra as numeric) as extra_amount, -- Thêm cột này
-    cast(mta_tax as numeric) as mta_tax,
-    cast(tip_amount as numeric) as tip_amount,
-    cast(tolls_amount as numeric) as tolls_amount,
-    cast(imp_surcharge as numeric) as improvement_surcharge, -- Đổi tên cho rõ
-    cast(airport_fee as numeric) as airport_fee,
-    cast(total_amount as numeric) as total_amount
+WITH historical_trips AS (
+    SELECT
+        -- IDs (Tất cả đều là STRING trong nguồn)
+        cast(vendor_id as string) as vendor_id,
+        
+        -- Timestamps - Shift +4 years (1461 days)
+        TIMESTAMP_ADD(CAST(pickup_datetime AS TIMESTAMP), INTERVAL 1461 DAY) as picked_up_at,
+        TIMESTAMP_ADD(CAST(dropoff_datetime AS TIMESTAMP), INTERVAL 1461 DAY) as dropped_off_at,
+        
+        -- Trip info
+        cast(passenger_count as int64) as passenger_count,
+        cast(trip_distance as numeric) as trip_distance,
+        
+        -- Location info (Là STRING trong nguồn)
+        cast(pickup_location_id as string) as pickup_location_id,
+        cast(dropoff_location_id as string) as dropoff_location_id,
+        
+        -- Payment info (Là STRING trong nguồn)
+        cast(rate_code as string) as rate_code_id,
+        cast(payment_type as string) as payment_type_id,
+        
+        -- Numeric payment info
+        cast(fare_amount as numeric) as fare_amount,
+        cast(extra as numeric) as extra_amount,
+        cast(mta_tax as numeric) as mta_tax,
+        cast(tip_amount as numeric) as tip_amount,
+        cast(tolls_amount as numeric) as tolls_amount,
+        cast(imp_surcharge as numeric) as improvement_surcharge,
+        cast(airport_fee as numeric) as airport_fee,
+        cast(total_amount as numeric) as total_amount
 
-from {{ source('public_data', 'tlc_yellow_trips_2021') }}
+    FROM {{ source('public_data', 'tlc_yellow_trips_2021') }}
 
-where
-    -- Lọc bỏ các chuyến đi rác (ví dụ: khoảng cách <= 0)
-    trip_distance > 0
-    and passenger_count > 0
-    and total_amount > 0
-    -- Filter for actual 2025 data (remove weird future dates)
-    and pickup_datetime >= '2021-09-23'  -- Data từ 23/9/2021
-    and pickup_datetime < '2021-11-24'   -- Đến hết 23/11/2021
-    -- Filter valid location IDs (not null/empty)
-    and pickup_location_id is not null
-    and dropoff_location_id is not null
-    and pickup_location_id != ''
-    and dropoff_location_id != ''
+    WHERE
+        trip_distance > 0
+        AND passenger_count > 0
+        AND total_amount > 0
+        AND pickup_datetime >= '2021-09-23'
+        AND pickup_datetime < '2021-11-24'
+        AND pickup_location_id IS NOT NULL
+        AND dropoff_location_id IS NOT NULL
+        AND pickup_location_id != ''
+        AND dropoff_location_id != ''
+),
+
+streaming_trips AS (
+    SELECT
+        CAST(vendor_id AS STRING) AS vendor_id,
+        pickup_datetime AS picked_up_at,
+        dropoff_datetime AS dropped_off_at,
+        CAST(passenger_count AS INT64) AS passenger_count,
+        CAST(trip_distance AS NUMERIC) AS trip_distance,
+        CAST(pickup_location_id AS STRING) AS pickup_location_id,
+        CAST(dropoff_location_id AS STRING) AS dropoff_location_id,
+        CAST('1' AS STRING) AS rate_code_id,  -- Default value
+        CAST('1' AS STRING) AS payment_type_id,  -- Default value
+        CAST(fare_amount AS NUMERIC) AS fare_amount,
+        CAST(0.0 AS NUMERIC) AS extra_amount,  -- Not in streaming
+        CAST(0.0 AS NUMERIC) AS mta_tax,  -- Not in streaming
+        CAST(0.0 AS NUMERIC) AS tip_amount,  -- Not in streaming
+        CAST(0.0 AS NUMERIC) AS tolls_amount,  -- Not in streaming
+        CAST(0.0 AS NUMERIC) AS improvement_surcharge,  -- Not in streaming
+        CAST(0.0 AS NUMERIC) AS airport_fee,  -- Not in streaming
+        CAST(total_amount AS NUMERIC) AS total_amount
+        
+    FROM {{ source('streaming_data', 'processed_trips') }}
+    
+    WHERE
+        trip_distance > 0
+        AND passenger_count > 0
+        AND total_amount > 0
+        AND pickup_datetime >= TIMESTAMP('2025-11-24')  -- Only streaming data after historical cutoff
+        AND pickup_location_id IS NOT NULL
+        AND dropoff_location_id IS NOT NULL
+)
+
+-- Combine both sources
+SELECT * FROM historical_trips
+UNION ALL
+SELECT * FROM streaming_trips
 
 -- dbt run --select stg_taxi_trips

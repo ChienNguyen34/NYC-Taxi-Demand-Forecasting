@@ -18,11 +18,11 @@ PUB_SUB_TOPIC_ID = os.environ.get("PUB_SUB_TOPIC_ID", "weather-stream")
 # Correctly read the secret when deployed to a Gen 2 function
 # The secret is mounted as a file at /secrets/SECRET_NAME
 if os.path.exists('/secrets/OPENWEATHER_API_KEY'):
-    with open('/secrets/OPENWEATHER_API_KEY', 'r') as f:
+    with open('/secrets/OPENWEATHER_API_KEY', 'r', encoding='utf-8-sig') as f:
         OPENWEATHER_API_KEY = f.read().strip()
 else:
     # Fallback for local development, where the secret is set as an env var
-    OPENWEATHER_API_KEY = os.environ.get("OPENWEATHER_API_KEY")
+    OPENWEATHER_API_KEY = os.environ.get("OPENWEATHER_API_KEY", "").strip()
 
 NYC_LAT = os.environ.get("NYC_LAT", "40.7128")
 NYC_LON = os.environ.get("NYC_LON", "-74.0060")

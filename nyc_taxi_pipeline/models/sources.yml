@@ -23,3 +23,8 @@ sources:
     schema: raw_data 
     tables:
       - name: weather_api_data # Bảng chứa dữ liệu streaming từ API
+  
+  - name: streaming_data # Real-time streaming data
+    schema: streaming
+    tables:
+      - name: processed_trips # Bảng chứa taxi trips từ Cloud Functions streaming
