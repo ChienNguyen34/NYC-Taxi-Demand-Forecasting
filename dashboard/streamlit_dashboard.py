@@ -158,7 +158,7 @@ def get_rfm_analysis(_client, days=30):
     query = f"""
     WITH zone_metrics AS (
         SELECT
-            t.pickup_location_id,
+            t.pickup_h3_id,
             l.zone_name,
             l.borough,
             -- Recency: days since last pickup
@@ -170,9 +170,9 @@ def get_rfm_analysis(_client, days=30):
             AVG(CASE WHEN t.fare_amount > 0 THEN t.tip_amount / t.fare_amount * 100 ELSE 0 END) as avg_tip_percentage
         FROM `{GCP_PROJECT_ID}.facts.fct_trips` t
         LEFT JOIN `{GCP_PROJECT_ID}.dimensions.dim_location` l 
-            ON t.pickup_location_id = l.location_id
+            ON t.pickup_h3_id = l.h3_id
         WHERE DATE(t.picked_up_at) >= DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
-        GROUP BY t.pickup_location_id, l.zone_name, l.borough
+        GROUP BY t.pickup_h3_id, l.zone_name, l.borough
     ),
     rfm_scores AS (
         SELECT
@@ -192,7 +192,7 @@ def get_rfm_analysis(_client, days=30):
         FROM zone_metrics
     )
     SELECT
-        pickup_location_id,
+        pickup_h3_id,
         zone_name,
         borough,
         recency_days,
