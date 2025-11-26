@@ -149,6 +149,88 @@ def get_hourly_demand_by_zone(_client):
         st.error(f"Error loading hourly demand forecast: {e}")
         return pd.DataFrame()
 
+@st.cache_data(ttl=3600)
+def get_rfm_analysis(_client, days=30):
+    """
+    Calculate RFM (Recency, Frequency, Monetary) analysis for taxi zones.
+    Returns dataframe with RFM scores and segments for driver insights.
+    """
+    query = f"""
+    WITH zone_metrics AS (
+        SELECT
+            t.pickup_location_id,
+            l.zone_name,
+            l.borough,
+            -- Recency: days since last pickup
+            DATE_DIFF(CURRENT_DATE(), MAX(DATE(t.picked_up_at)), DAY) as recency_days,
+            -- Frequency: total trips in period
+            COUNT(*) as frequency_trips,
+            -- Monetary: average earnings per trip (fare + tip + extra + tolls)
+            AVG(t.fare_amount + t.tip_amount + t.extra_amount + t.tolls_amount) as monetary_avg_earnings,
+            AVG(CASE WHEN t.fare_amount > 0 THEN t.tip_amount / t.fare_amount * 100 ELSE 0 END) as avg_tip_percentage
+        FROM `{GCP_PROJECT_ID}.facts.fct_trips` t
+        LEFT JOIN `{GCP_PROJECT_ID}.dimensions.dim_location` l 
+            ON t.pickup_location_id = l.location_id
+        WHERE DATE(t.picked_up_at) >= DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
+        GROUP BY t.pickup_location_id, l.zone_name, l.borough
+    ),
+    rfm_scores AS (
+        SELECT
+            *,
+            -- R Score: 5 = best (most recent), 1 = worst (long time ago)
+            CASE
+                WHEN recency_days <= 1 THEN 5
+                WHEN recency_days <= 3 THEN 4
+                WHEN recency_days <= 7 THEN 3
+                WHEN recency_days <= 14 THEN 2
+                ELSE 1
+            END as r_score,
+            -- F Score: quintiles (5 = top 20%, 1 = bottom 20%)
+            NTILE(5) OVER (ORDER BY frequency_trips DESC) as f_score,
+            -- M Score: quintiles (5 = top 20%, 1 = bottom 20%)
+            NTILE(5) OVER (ORDER BY monetary_avg_earnings DESC) as m_score
+        FROM zone_metrics
+    )
+    SELECT
+        pickup_location_id,
+        zone_name,
+        borough,
+        recency_days,
+        frequency_trips,
+        ROUND(monetary_avg_earnings, 2) as avg_earnings,
+        ROUND(avg_tip_percentage, 1) as avg_tip_pct,
+        r_score,
+        f_score,
+        m_score,
+        -- Segment assignment
+        CASE
+            WHEN r_score >= 4 AND f_score >= 4 AND m_score >= 4 THEN 'Gold'
+            WHEN r_score >= 3 AND f_score >= 3 AND m_score >= 3 THEN 'Silver'
+            WHEN r_score >= 2 AND f_score >= 2 THEN 'Bronze'
+            WHEN r_score <= 2 AND f_score <= 2 THEN 'Watch'
+            ELSE 'Dead'
+        END as segment
+    FROM rfm_scores
+    ORDER BY f_score DESC, m_score DESC, r_score DESC
+    """
+    try:
+        df = _client.query(query).to_dataframe()
+        return df
+    except Exception as e:
+        st.error(f"Error loading RFM analysis: {e}")
+        return pd.DataFrame()
+
+def get_segment_color(segment):
+    """Returns color for each RFM segment."""
+    colors = {
+        'Gold': '#FFD700',      # Gold
+        'Silver': '#C0C0C0',    # Silver
+        'Bronze': '#CD7F32',    # Bronze
+        'Watch': '#FFA500',     # Orange (warning)
+        'Dead': '#808080'       # Gray
+    }
+    return colors.get(segment, '#CCCCCC')
+
 def get_color_for_demand(demand, max_demand):
     """Returns bright color based on demand level."""
     if max_demand == 0:
@@ -256,7 +338,8 @@ st.title("🚕 NYC Taxi Analytics Dashboard")
 # Tab 1: Real-time fare prediction with map
 # Tab 2: Hourly demand forecast visualization
 # Tab 3: Admin trip analysis with interactive scatter plot
-tab1, tab2, tab3 = st.tabs(["🗺️ Fare Prediction", "📊 Hourly Demand Heatmap", "📈 Trip Analysis"])
+# Tab 4: RFM zone analysis for driver insights
+tab1, tab2, tab3, tab4 = st.tabs(["🗺️ Fare Prediction", "📊 Hourly Demand Heatmap", "📈 Trip Analysis", "💎 Zone Analysis"])
 
 with tab1:
     map_col, controls_col = st.columns([2, 1])
@@ -703,5 +786,231 @@ with tab3:
     else:
         # Initial state - no data loaded
         st.info("ℹ️ Configure filters above and click 'Load and Analyze Data' to begin analysis.")
-        st.error("No hourly demand data available. Check if the forecast table has data.")
+
+# ======================================================================================
+# TAB 4: RFM ZONE ANALYSIS FOR DRIVERS
+# ======================================================================================
+# This tab helps drivers identify the most profitable zones using RFM analysis:
+# - R (Recency): How recently did this zone have pickups?
+# - F (Frequency): How many trips does this zone generate?
+# - M (Monetary): How much do drivers earn per trip in this zone?
+# Segments: Gold (best), Silver, Bronze, Watch (declining), Dead (avoid)
+
+with tab4:
+    st.subheader("💎 RFM Zone Analysis - Driver Insights")
+    st.markdown("""
+        Identify the **most profitable zones** for taxi drivers using RFM (Recency, Frequency, Monetary) analysis.
+        Zones are scored 1-5 on each metric and categorized into actionable segments.
+    """)
+    
+    # Analysis period selector
+    st.markdown("### Analysis Settings")
+    analysis_days = st.selectbox(
+        "Analysis Period",
+        options=[30, 60, 90],
+        index=0,
+        help="Number of days to analyze. 30 days = recent trends, 60+ days = stable patterns"
+    )
+    
+    # Load RFM data
+    with st.spinner(f"Calculating RFM scores for zones (last {analysis_days} days)..."):
+        rfm_df = get_rfm_analysis(client, days=analysis_days)
+    
+    if rfm_df.empty:
+        st.error("❌ No RFM data available. Check if fct_trips table has data.")
+        st.stop()
+    
+    # Summary metrics
+    st.markdown("---")
+    st.markdown("### 📊 Summary Statistics")
+    
+    col1, col2, col3, col4, col5 = st.columns(5)
+    
+    with col1:
+        total_zones = len(rfm_df)
+        st.metric("Total Zones", total_zones)
+    
+    with col2:
+        gold_zones = len(rfm_df[rfm_df['segment'] == 'Gold'])
+        st.metric("🥇 Gold Zones", gold_zones)
+    
+    with col3:
+        silver_zones = len(rfm_df[rfm_df['segment'] == 'Silver'])
+        st.metric("🥈 Silver Zones", silver_zones)
+    
+    with col4:
+        avg_earnings = rfm_df['avg_earnings'].mean()
+        st.metric("Avg Earnings/Trip", f"${avg_earnings:.2f}")
+    
+    with col5:
+        avg_tip = rfm_df['avg_tip_pct'].mean()
+        st.metric("Avg Tip %", f"{avg_tip:.1f}%")
+    
+    # Segment distribution
+    st.markdown("---")
+    st.markdown("### 🎯 Zone Segments Distribution")
+    
+    segment_counts = rfm_df['segment'].value_counts()
+    
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        # Bar chart
+        import plotly.graph_objects as go
+        fig = go.Figure(data=[
+            go.Bar(
+                x=segment_counts.index,
+                y=segment_counts.values,
+                marker_color=[get_segment_color(seg) for seg in segment_counts.index],
+                text=segment_counts.values,
+                textposition='auto'
+            )
+        ])
+        fig.update_layout(
+            title="Zones by Segment",
+            xaxis_title="Segment",
+            yaxis_title="Number of Zones",
+            height=400,
+            template="plotly_white"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    
+    with col2:
+        # Revenue contribution by segment
+        segment_revenue = rfm_df.groupby('segment').agg({
+            'frequency_trips': 'sum',
+            'avg_earnings': 'mean'
+        }).reset_index()
+        segment_revenue['total_revenue'] = segment_revenue['frequency_trips'] * segment_revenue['avg_earnings']
+        
+        fig2 = go.Figure(data=[
+            go.Pie(
+                labels=segment_revenue['segment'],
+                values=segment_revenue['total_revenue'],
+                marker_colors=[get_segment_color(seg) for seg in segment_revenue['segment']],
+                hole=0.3
+            )
+        ])
+        fig2.update_layout(
+            title="Revenue Contribution by Segment",
+            height=400,
+            template="plotly_white"
+        )
+        st.plotly_chart(fig2, use_container_width=True)
+    
+    # Top zones by segment
+    st.markdown("---")
+    st.markdown("### 🏆 Top Zones by Segment")
+    
+    segment_filter = st.multiselect(
+        "Filter by Segment",
+        options=['Gold', 'Silver', 'Bronze', 'Watch', 'Dead'],
+        default=['Gold', 'Silver'],
+        help="Select segments to display in the table"
+    )
+    
+    if segment_filter:
+        filtered_df = rfm_df[rfm_df['segment'].isin(segment_filter)].copy()
+        
+        # Format display
+        display_df = filtered_df[[
+            'zone_name', 'borough', 'segment', 
+            'recency_days', 'frequency_trips', 'avg_earnings', 'avg_tip_pct',
+            'r_score', 'f_score', 'm_score'
+        ]].head(50)
+        
+        display_df.columns = [
+            'Zone Name', 'Borough', 'Segment',
+            'Days Since Last', 'Total Trips', 'Avg Earnings', 'Avg Tip %',
+            'R', 'F', 'M'
+        ]
+        
+        st.dataframe(
+            display_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Segment": st.column_config.TextColumn(
+                    "Segment",
+                    help="Gold=Best, Silver=Good, Bronze=OK, Watch=Declining, Dead=Avoid"
+                ),
+                "Avg Earnings": st.column_config.NumberColumn(
+                    "Avg Earnings",
+                    format="$%.2f"
+                ),
+                "Avg Tip %": st.column_config.NumberColumn(
+                    "Avg Tip %",
+                    format="%.1f%%"
+                )
+            }
+        )
+    else:
+        st.info("Select at least one segment to view zones.")
+    
+    # Driver recommendations
+    st.markdown("---")
+    st.markdown("### 💡 Driver Recommendations")
+    
+    gold_zones_list = rfm_df[rfm_df['segment'] == 'Gold']['zone_name'].head(5).tolist()
+    watch_zones_list = rfm_df[rfm_df['segment'] == 'Watch']['zone_name'].head(3).tolist()
+    
+    rec_col1, rec_col2 = st.columns(2)
+    
+    with rec_col1:
+        st.success(f"""
+        **✅ Prioritize Gold Zones:**
+        - {', '.join(gold_zones_list) if gold_zones_list else 'None available'}
+        - High frequency, high earnings, active now
+        - Best ROI for your time
+        """)
+        
+        st.info(f"""
+        **📊 Strategy Tips:**
+        - Focus on Gold zones during peak hours (7-9 AM, 5-7 PM)
+        - Silver zones good for steady income
+        - Bronze zones acceptable if nearby
+        """)
+    
+    with rec_col2:
+        st.warning(f"""
+        **⚠️ Watch Zones (Declining):**
+        - {', '.join(watch_zones_list) if watch_zones_list else 'None'}
+        - Previously active but traffic dropping
+        - Only visit during surge pricing
+        """)
+        
+        st.error(f"""
+        **❌ Avoid Dead Zones:**
+        - {len(rfm_df[rfm_df['segment'] == 'Dead'])} zones with no recent activity
+        - Low earnings, infrequent trips
+        - Not worth your time
+        """)
+    
+    # RFM explanation
+    with st.expander("ℹ️ How RFM Scoring Works"):
+        st.markdown("""
+        **RFM Analysis Explained:**
+        
+        **R - Recency (1-5 points):**
+        - 5 = Pickup today/yesterday (very active)
+        - 1 = No pickup for 15+ days (inactive)
+        
+        **F - Frequency (1-5 points):**
+        - 5 = Top 20% by trip count (high volume)
+        - 1 = Bottom 20% by trip count (low volume)
+        
+        **M - Monetary (1-5 points):**
+        - 5 = Top 20% by avg earnings (high value)
+        - 1 = Bottom 20% by avg earnings (low value)
+        
+        **Avg Earnings = Base Fare + Tips + Extra + Tolls**
+        
+        **Segments:**
+        - 🥇 **Gold**: R≥4, F≥4, M≥4 (Best zones - go here!)
+        - 🥈 **Silver**: R≥3, F≥3, M≥3 (Good backup options)
+        - 🥉 **Bronze**: R≥2, F≥2 (Acceptable if nearby)
+        - ⚠️ **Watch**: R≤2, F≤2 (Declining - be careful)
+        - ❌ **Dead**: Low on all metrics (Avoid)
+        """)
+
 
