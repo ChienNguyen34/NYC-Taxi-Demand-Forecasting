@@ -55,15 +55,15 @@ streaming_trips AS (
         CAST(trip_distance AS NUMERIC) AS trip_distance,
         CAST(pickup_location_id AS STRING) AS pickup_location_id,
         CAST(dropoff_location_id AS STRING) AS dropoff_location_id,
-        CAST('1' AS STRING) AS rate_code_id,  -- Default value
-        CAST('1' AS STRING) AS payment_type_id,  -- Default value
+        CAST(rate_code AS STRING) AS rate_code_id,
+        CAST(payment_type AS STRING) AS payment_type_id,
         CAST(fare_amount AS NUMERIC) AS fare_amount,
-        CAST(0.0 AS NUMERIC) AS extra_amount,  -- Not in streaming
-        CAST(0.0 AS NUMERIC) AS mta_tax,  -- Not in streaming
-        CAST(0.0 AS NUMERIC) AS tip_amount,  -- Not in streaming
-        CAST(0.0 AS NUMERIC) AS tolls_amount,  -- Not in streaming
-        CAST(0.0 AS NUMERIC) AS improvement_surcharge,  -- Not in streaming
-        CAST(0.0 AS NUMERIC) AS airport_fee,  -- Not in streaming
+        CAST(extra AS NUMERIC) AS extra_amount,
+        CAST(mta_tax AS NUMERIC) AS mta_tax,
+        CAST(tip_amount AS NUMERIC) AS tip_amount,
+        CAST(tolls_amount AS NUMERIC) AS tolls_amount,
+        CAST(imp_surcharge AS NUMERIC) AS improvement_surcharge,
+        CAST(airport_fee AS NUMERIC) AS airport_fee,
         CAST(total_amount AS NUMERIC) AS total_amount
         
     FROM {{ source('streaming_data', 'processed_trips') }}

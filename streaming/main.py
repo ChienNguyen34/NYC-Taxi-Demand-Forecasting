@@ -169,7 +169,7 @@ def fetch_taxi_trips_and_publish(request):
     
     print(f"Fetching trips for 2021 date: {date_2021_str} (will be shifted to {target_date_2025})")
     
-    # Query public dataset - sample random trips
+    # Query public dataset - sample random trips with ALL fields
     query = f"""
     SELECT
         vendor_id,
@@ -179,7 +179,15 @@ def fetch_taxi_trips_and_publish(request):
         trip_distance,
         pickup_location_id,
         dropoff_location_id,
+        rate_code,
+        payment_type,
         fare_amount,
+        extra,
+        mta_tax,
+        tip_amount,
+        tolls_amount,
+        imp_surcharge,
+        airport_fee,
         total_amount
     FROM `bigquery-public-data.new_york_taxi_trips.tlc_yellow_trips_2021`
     WHERE DATE(pickup_datetime) = '{date_2021_str}'
@@ -199,11 +207,11 @@ def fetch_taxi_trips_and_publish(request):
         
         trips_published = 0
         for row in results:
-            # Shift timestamps +4 years (1461 days)
-            pickup_2025 = row.pickup_datetime + timedelta(days=1461)
-            dropoff_2025 = row.dropoff_datetime + timedelta(days=1461)
+            # Shift timestamps +4 years (1462 days for full 2025 year)
+            pickup_2025 = row.pickup_datetime + timedelta(days=1462)
+            dropoff_2025 = row.dropoff_datetime + timedelta(days=1462)
             
-            # Create trip message
+            # Create trip message with ALL fields
             trip_data = {
                 "vendor_id": str(row.vendor_id),
                 "pickup_datetime": pickup_2025.isoformat(),
@@ -212,7 +220,15 @@ def fetch_taxi_trips_and_publish(request):
                 "trip_distance": float(row.trip_distance),
                 "pickup_location_id": str(row.pickup_location_id),
                 "dropoff_location_id": str(row.dropoff_location_id),
+                "rate_code": str(row.rate_code) if row.rate_code else "1",
+                "payment_type": str(row.payment_type) if row.payment_type else "1",
                 "fare_amount": float(row.fare_amount),
+                "extra": float(row.extra) if row.extra else 0.0,
+                "mta_tax": float(row.mta_tax) if row.mta_tax else 0.0,
+                "tip_amount": float(row.tip_amount) if row.tip_amount else 0.0,
+                "tolls_amount": float(row.tolls_amount) if row.tolls_amount else 0.0,
+                "imp_surcharge": float(row.imp_surcharge) if row.imp_surcharge else 0.0,
+                "airport_fee": float(row.airport_fee) if row.airport_fee else 0.0,
                 "total_amount": float(row.total_amount)
             }
             
@@ -271,7 +287,15 @@ def insert_taxi_trips_to_bq(cloud_event):
             "trip_distance": trip_data["trip_distance"],
             "pickup_location_id": trip_data["pickup_location_id"],
             "dropoff_location_id": trip_data["dropoff_location_id"],
+            "rate_code": trip_data.get("rate_code", "1"),
+            "payment_type": trip_data.get("payment_type", "1"),
             "fare_amount": trip_data["fare_amount"],
+            "extra": trip_data.get("extra", 0.0),
+            "mta_tax": trip_data.get("mta_tax", 0.0),
+            "tip_amount": trip_data.get("tip_amount", 0.0),
+            "tolls_amount": trip_data.get("tolls_amount", 0.0),
+            "imp_surcharge": trip_data.get("imp_surcharge", 0.0),
+            "airport_fee": trip_data.get("airport_fee", 0.0),
             "total_amount": trip_data["total_amount"],
             "processing_timestamp": current_time_utc.isoformat()
         }

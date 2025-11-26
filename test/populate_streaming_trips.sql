@@ -17,14 +17,14 @@ SELECT
     CAST(total_amount AS FLOAT64) as total_amount,
     CURRENT_TIMESTAMP() as processing_timestamp
 FROM `bigquery-public-data.new_york_taxi_trips.tlc_yellow_trips_2021`
-WHERE DATE(pickup_datetime) BETWEEN '2021-11-01' AND '2021-11-23'  -- 23 ngày data
+WHERE DATE(pickup_datetime) BETWEEN '2021-11-01' AND '2021-11-26' 
     AND trip_distance > 0
     AND passenger_count > 0
     AND total_amount > 0
     AND pickup_location_id IS NOT NULL
     AND dropoff_location_id IS NOT NULL
 ORDER BY RAND()
-LIMIT 10000;  -- 10K trips để test
+LIMIT 100000;  -- 10K trips để test
 
 -- Verify
 SELECT 
