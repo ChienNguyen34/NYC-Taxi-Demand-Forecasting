@@ -187,9 +187,9 @@ def get_rfm_analysis(_client, days=30):
                 ELSE 1
             END as r_score,
             -- F Score: quintiles (5 = top 20%, 1 = bottom 20%)
-            NTILE(5) OVER (ORDER BY frequency_trips DESC) as f_score,
+            NTILE(5) OVER (ORDER BY frequency_trips ASC) as f_score,
             -- M Score: quintiles (5 = top 20%, 1 = bottom 20%)
-            NTILE(5) OVER (ORDER BY monetary_avg_earnings DESC) as m_score
+            NTILE(5) OVER (ORDER BY monetary_avg_earnings ASC) as m_score
         FROM zone_metrics
     )
     SELECT
@@ -203,12 +203,17 @@ def get_rfm_analysis(_client, days=30):
         r_score,
         f_score,
         m_score,
-        -- Segment assignment
+        -- Segment assignment (order matters - check best segments first)
         CASE
+            -- Gold: All 3 metrics high (best zones)
             WHEN r_score >= 4 AND f_score >= 4 AND m_score >= 4 THEN 'Gold'
+            -- Silver: All 3 metrics good (solid backup)
             WHEN r_score >= 3 AND f_score >= 3 AND m_score >= 3 THEN 'Silver'
-            WHEN r_score >= 2 AND f_score >= 2 THEN 'Bronze'
-            WHEN r_score <= 2 AND f_score <= 2 THEN 'Watch'
+            -- Bronze: Decent frequency & recency (acceptable)
+            WHEN r_score >= 2 AND f_score >= 3 THEN 'Bronze'
+            -- Watch: Low recency, was good before (declining zones)
+            WHEN r_score <= 2 AND (f_score >= 3 OR m_score >= 3) THEN 'Watch'
+            -- Dead: Low on all metrics (avoid)
             ELSE 'Dead'
         END as segment
     FROM rfm_scores
