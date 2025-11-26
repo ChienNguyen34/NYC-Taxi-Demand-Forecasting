@@ -172,6 +172,7 @@ def get_rfm_analysis(_client, days=30):
         LEFT JOIN `{GCP_PROJECT_ID}.dimensions.dim_location` l 
             ON t.pickup_h3_id = l.h3_id
         WHERE DATE(t.picked_up_at) >= DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
+            AND DATE(t.picked_up_at) <= CURRENT_DATE()  -- Exclude future dates
         GROUP BY t.pickup_h3_id, l.zone_name, l.borough
     ),
     rfm_scores AS (
@@ -877,18 +878,20 @@ with tab4:
     
     with col2:
         # Revenue contribution by segment
-        segment_revenue = rfm_df.groupby('segment').agg({
-            'frequency_trips': 'sum',
-            'avg_earnings': 'mean'
-        }).reset_index()
-        segment_revenue['total_revenue'] = segment_revenue['frequency_trips'] * segment_revenue['avg_earnings']
+        # Calculate total revenue per zone first, then sum by segment
+        rfm_df['zone_revenue'] = rfm_df['frequency_trips'] * rfm_df['avg_earnings']
+        segment_revenue = rfm_df.groupby('segment')['zone_revenue'].sum().reset_index()
+        segment_revenue.columns = ['segment', 'total_revenue']
+        segment_revenue = segment_revenue.sort_values('total_revenue', ascending=False)
         
         fig2 = go.Figure(data=[
             go.Pie(
                 labels=segment_revenue['segment'],
                 values=segment_revenue['total_revenue'],
                 marker_colors=[get_segment_color(seg) for seg in segment_revenue['segment']],
-                hole=0.3
+                hole=0.3,
+                textinfo='label+percent',
+                textposition='inside'
             )
         ])
         fig2.update_layout(
@@ -912,15 +915,20 @@ with tab4:
     if segment_filter:
         filtered_df = rfm_df[rfm_df['segment'].isin(segment_filter)].copy()
         
-        # Format display
+        # Sort by segment priority (Gold first), then by trips descending
+        segment_order = {'Gold': 1, 'Silver': 2, 'Bronze': 3, 'Watch': 4, 'Dead': 5}
+        filtered_df['segment_order'] = filtered_df['segment'].map(segment_order)
+        filtered_df = filtered_df.sort_values(['segment_order', 'frequency_trips'], ascending=[True, False])
+        
+        # Format display - Segment column first
         display_df = filtered_df[[
-            'zone_name', 'borough', 'segment', 
+            'segment', 'zone_name', 'borough',
             'recency_days', 'frequency_trips', 'avg_earnings', 'avg_tip_pct',
             'r_score', 'f_score', 'm_score'
         ]].head(50)
         
         display_df.columns = [
-            'Zone Name', 'Borough', 'Segment',
+            'Segment', 'Zone Name', 'Borough',
             'Days Since Last', 'Total Trips', 'Avg Earnings', 'Avg Tip %',
             'R', 'F', 'M'
         ]
