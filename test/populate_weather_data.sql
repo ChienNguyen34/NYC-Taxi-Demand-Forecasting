@@ -28,7 +28,7 @@ WHERE
     stn IN ('725030', '744860', '725053')
     
     -- Sept 1 - Nov 30, 2021 (will be shifted to 2025)
-    AND DATE(date) BETWEEN '2021-09-01' AND '2021-11-30'
+    AND DATE(date) BETWEEN '2021-01-01' AND '2021-12-06'
     
     -- Data quality filters
     AND temp IS NOT NULL

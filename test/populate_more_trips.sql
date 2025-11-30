@@ -41,7 +41,7 @@ FROM
 
 WHERE
     -- Lấy data từ Sept 1 - Nov 30, 2021 (3 tháng)
-    DATE(pickup_datetime) BETWEEN '2021-09-01' AND '2021-11-30'
+    DATE(pickup_datetime) BETWEEN '2021-01-01' AND '2021-12-06'
     
     -- Filter data quality
     AND pickup_datetime IS NOT NULL

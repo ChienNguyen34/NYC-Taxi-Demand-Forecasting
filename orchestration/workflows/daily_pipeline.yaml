@@ -99,7 +99,7 @@ main:
                     quarter,
                     day_of_year
                 FROM `nyc-taxi-project-477115.facts.fct_hourly_features`
-                WHERE pickups_1h_ago IS NOT NULL
+                WHERE pickups_24h_ago IS NOT NULL
               useLegacySql: false
               timeoutMs: 600000
           result: demand_model_result
@@ -196,8 +196,11 @@ main:
                             quarter,
                             day_of_year
                         FROM `nyc-taxi-project-477115.facts.fct_hourly_features`
-                        WHERE timestamp_hour >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
-                            AND pickups_1h_ago IS NOT NULL
+                        WHERE timestamp_hour >= (
+                            SELECT TIMESTAMP_SUB(MAX(timestamp_hour), INTERVAL 24 HOUR)
+                            FROM `nyc-taxi-project-477115.facts.fct_hourly_features`
+                        )
+                            AND pickups_24h_ago IS NOT NULL
                     )
                 ) p
                 ON f.pickup_h3_id = p.pickup_h3_id

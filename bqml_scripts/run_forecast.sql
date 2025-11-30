@@ -46,7 +46,6 @@ INNER JOIN
             WHERE
                 -- Predict cho 24 giờ gần nhất (hoặc data mới nhất)
                 timestamp_hour >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
-                AND pickups_1h_ago IS NOT NULL
                 AND pickups_24h_ago IS NOT NULL
         )
     ) p
