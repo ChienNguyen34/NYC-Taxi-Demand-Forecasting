@@ -5,12 +5,6 @@
     gcloud auth application-default login
     ```
 2.  **Set GCP Project ID:** The application now reads the GCP Project ID from an environment variable.
-    *   **Temporary (for current terminal session):**
-        ```bash
-        $env:GCP_PROJECT_ID="nyc-taxi-project-478411" # For PowerShell
-        export GCP_PROJECT_ID="nyc-taxi-project-478411" # For Bash/Zsh
-        ```
-    *   **(Optional) Persistent setup:** Add the `export GCP_PROJECT_ID="nyc-taxi-project-478411"` line to your shell's profile file (e.g., `.bashrc`, `.zshrc`, `config.fish`, or system environment variables on Windows).
 
 3.  **Install Libraries:** Ensure you have the required libraries installed from the updated `dashboard_requirements.txt`.
     ```bash

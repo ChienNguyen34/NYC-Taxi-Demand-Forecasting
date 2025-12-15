@@ -28,6 +28,11 @@ st.set_page_config(
 # Configuration & BigQuery Connection
 # ======================================================================================
 
+# --- Demo Mode Toggle ---
+# Set DEMO_MODE=True in environment variable to use mock data (no BigQuery needed)
+# Default is False (use real BigQuery data)
+DEMO_MODE = os.environ.get("DEMO_MODE", "False").lower() == "true"
+
 # --- GCP Project and BigQuery Table/Model IDs ---
 GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "nyc-taxi-project-477115") # Use environment variable, with a default for local dev
 FARE_MODEL_ID = f"{GCP_PROJECT_ID}.ml_models.fare_estimation_model"
@@ -38,6 +43,8 @@ STREAMING_WEATHER_TABLE = f"{GCP_PROJECT_ID}.raw_data.weather_api_data"
 @st.cache_resource
 def get_gcp_client():
     """Initializes and returns a connection to Google BigQuery."""
+    if DEMO_MODE:
+        return None  # No client needed in demo mode
     return bigquery.Client(project=GCP_PROJECT_ID)
 
 client = get_gcp_client()
@@ -58,12 +65,23 @@ if 'predicted_fare' not in st.session_state:
 # Data Warehouse Helper Functions
 # ======================================================================================
 
+# Import demo data functions if in demo mode
+if DEMO_MODE:
+    from demo_data import (
+        get_demo_weather_data, get_demo_high_demand_zones, get_demo_hourly_demand,
+        get_demo_all_zones, get_demo_rfm_analysis, get_demo_trip_data,
+        get_demo_vendor_data, get_demo_pca_data, predict_demo_fare
+    )
+
 @st.cache_data(ttl=60) # Cache for 60 seconds for real-time data
 def get_live_weather_data(_client):
     """
     Queries the data warehouse for the latest streaming weather data,
     parsing the required fields from the raw_json column.
     """
+    if DEMO_MODE:
+        return get_demo_weather_data()
+    
     query = f"""
         SELECT
             JSON_VALUE(raw_json, '$.main.temp') AS temperature_celsius,
@@ -102,6 +120,9 @@ def get_live_weather_data(_client):
 @st.cache_data(ttl=3600)
 def get_all_active_zones(_client):
     """Get all zones that have any historical trip data."""
+    if DEMO_MODE:
+        return get_demo_all_zones()
+    
     query = f"""
         SELECT DISTINCT
             h3_id as pickup_h3_id
@@ -119,6 +140,9 @@ def get_all_active_zones(_client):
 @st.cache_data(ttl=3600)
 def get_high_demand_zones(_client):
     """Queries actual demand data and converts H3 IDs to GeoJSON polygons."""
+    if DEMO_MODE:
+        return get_demo_high_demand_zones()
+    
     query = f"""
         SELECT
             pickup_h3_id,
@@ -152,6 +176,9 @@ def get_high_demand_zones(_client):
 @st.cache_data(ttl=3600)
 def get_hourly_demand_by_zone(_client):
     """Get hourly demand forecast data from ML predictions table."""
+    if DEMO_MODE:
+        return get_demo_hourly_demand()
+    
     query = f"""
         SELECT
             pickup_h3_id,
@@ -176,6 +203,9 @@ def get_rfm_analysis(_client, days=30):
     Calculate RFM (Recency, Frequency, Monetary) analysis for taxi zones.
     Returns dataframe with RFM scores and segments for driver insights.
     """
+    if DEMO_MODE:
+        return get_demo_rfm_analysis(days)
+    
     query = f"""
     WITH zone_metrics AS (
         SELECT
@@ -282,6 +312,10 @@ def get_circle_radius(demand, max_demand, min_radius=250, max_radius=600):
 
 def predict_fare_from_bqml(_client, pickup_loc, dropoff_loc):
     """Constructs a query to call the BQML model for fare prediction."""
+    if DEMO_MODE:
+        st.session_state.predicted_fare = predict_demo_fare(pickup_loc, dropoff_loc)
+        return
+    
     with st.spinner('Analyzing route, weather, and demand...'):
         try:
             # Convert lat/lon to H3 hexagons (resolution 8, as used in training)
@@ -360,6 +394,10 @@ def predict_fare_from_bqml(_client, pickup_loc, dropoff_loc):
 # ======================================================================================
 
 st.title("🚕 NYC Taxi Analytics Dashboard")
+
+# Demo mode banner
+if DEMO_MODE:
+    st.info("🎭 **DEMO MODE** - Hiển thị dữ liệu giả lập (BigQuery đã tắt để tiết kiệm chi phí). Tất cả data và predictions đều là mock data để demo.")
 
 # Add tabs for different use cases
 # Tab 1: Real-time fare prediction with map
@@ -723,68 +761,76 @@ with tab3:
     if st.button("🔍 Load and Analyze Data", type="primary"):
         st.subheader(f"Analyzing {num_trips} trips from {start_date} to {end_date}")
 
-        # Query to fetch trip data from the facts table
-        # Filters:
-        # 1. trip_distance > 0 (exclude invalid trips)
-        # 2. fare_amount > 0 (exclude invalid fares)
-        # 3. Date range filter on pickup time
-        # ORDER BY RAND() ensures random sampling across the date range
-        query = f"""
-        SELECT
-            trip_id,
-            picked_up_at,
-            dropped_off_at,
-            passenger_count,
-            trip_distance,
-            fare_amount,
-            extra_amount,
-            mta_tax,
-            tip_amount,
-            tolls_amount,
-            improvement_surcharge,
-            airport_fee,
-            total_amount
-        FROM
-            `{GCP_PROJECT_ID}.facts.fct_trips`
-        WHERE
-            trip_distance > 0 
-            AND fare_amount > 0
-            AND DATE(picked_up_at) >= '{start_date.isoformat()}'
-            AND DATE(picked_up_at) <= '{end_date.isoformat()}'
-        ORDER BY RAND()
-        LIMIT {num_trips}
-        """
-
-        try:
-            with st.spinner("Loading trip data from BigQuery..."):
-                # Execute query and convert to pandas dataframe
-                df = client.query(query).to_dataframe()
-
-            if not df.empty:
-                # Debug info: Show data shape to verify loading
-                st.info(f"✅ Loaded {len(df)} trips successfully")
-                
-                # Feature engineering: Add day of week for pattern analysis
-                # This helps identify if certain days have different fare/distance patterns
-                if 'picked_up_at' in df.columns:
-                    df['day_of_week'] = df['picked_up_at'].dt.day_name()
-                else:
-                    st.warning("⚠️ Column 'picked_up_at' not found. Cannot create 'day_of_week'.")
-                    st.session_state['admin_df'] = pd.DataFrame()
-                    st.stop()
-
-                # Store in session state so data persists across interactions
-                # This prevents re-querying BigQuery every time user clicks a point
+        if DEMO_MODE:
+            # Use demo data
+            with st.spinner("Generating demo trip data..."):
+                df = get_demo_trip_data(num_trips)
+                st.info(f"✅ Loaded {len(df)} demo trips successfully")
                 st.session_state['admin_df'] = df
-                st.success(f"✅ Data processed and ready for analysis")
+                st.success(f"✅ Demo data processed and ready for analysis")
+        else:
+            # Query to fetch trip data from the facts table
+            # Filters:
+            # 1. trip_distance > 0 (exclude invalid trips)
+            # 2. fare_amount > 0 (exclude invalid fares)
+            # 3. Date range filter on pickup time
+            # ORDER BY RAND() ensures random sampling across the date range
+            query = f"""
+            SELECT
+                trip_id,
+                picked_up_at,
+                dropped_off_at,
+                passenger_count,
+                trip_distance,
+                fare_amount,
+                extra_amount,
+                mta_tax,
+                tip_amount,
+                tolls_amount,
+                improvement_surcharge,
+                airport_fee,
+                total_amount
+            FROM
+                `{GCP_PROJECT_ID}.facts.fct_trips`
+            WHERE
+                trip_distance > 0 
+                AND fare_amount > 0
+                AND DATE(picked_up_at) >= '{start_date.isoformat()}'
+                AND DATE(picked_up_at) <= '{end_date.isoformat()}'
+            ORDER BY RAND()
+            LIMIT {num_trips}
+            """
 
-            else:
-                st.warning("⚠️ No trip data found for the selected criteria. Try adjusting date range.")
-                st.session_state['admin_df'] = pd.DataFrame()
-        
-        except Exception as e:
-            st.error(f"❌ Error loading data from BigQuery: {e}")
-            st.info("💡 Make sure the fct_trips table exists and has data in the date range.")
+            try:
+                with st.spinner("Loading trip data from BigQuery..."):
+                    # Execute query and convert to pandas dataframe
+                    df = client.query(query).to_dataframe()
+
+                if not df.empty:
+                    # Debug info: Show data shape to verify loading
+                    st.info(f"✅ Loaded {len(df)} trips successfully")
+                    
+                    # Feature engineering: Add day of week for pattern analysis
+                    # This helps identify if certain days have different fare/distance patterns
+                    if 'picked_up_at' in df.columns:
+                        df['day_of_week'] = df['picked_up_at'].dt.day_name()
+                    else:
+                        st.warning("⚠️ Column 'picked_up_at' not found. Cannot create 'day_of_week'.")
+                        st.session_state['admin_df'] = pd.DataFrame()
+                        st.stop()
+
+                    # Store in session state so data persists across interactions
+                    # This prevents re-querying BigQuery every time user clicks a point
+                    st.session_state['admin_df'] = df
+                    st.success(f"✅ Data processed and ready for analysis")
+
+                else:
+                    st.warning("⚠️ No trip data found for the selected criteria. Try adjusting date range.")
+                    st.session_state['admin_df'] = pd.DataFrame()
+            
+            except Exception as e:
+                st.error(f"❌ Error loading data from BigQuery: {e}")
+                st.info("💡 Make sure the fct_trips table exists and has data in the date range.")
 
     # --- Interactive Visualization Section ---
     # This section renders even after button click (outside button block)
@@ -1366,74 +1412,84 @@ with tab6:
     
     # Load vendor comparison data
     with st.spinner("Loading vendor data..."):
-        # Query 1: Trips by hour
-        query_hourly = f"""
-        SELECT
-            vendor_id,
-            EXTRACT(HOUR FROM picked_up_at) as hour,
-            COUNT(*) as trip_count
-        FROM `{GCP_PROJECT_ID}.facts.fct_trips`
-        WHERE DATE(picked_up_at) BETWEEN '{start_date_vendor}' AND '{end_date_vendor}'
-            AND vendor_id IN ('1', '2')
-        GROUP BY vendor_id, hour
-        ORDER BY vendor_id, hour
-        """
-        
-        # Query 2: Trips by day of week
-        query_weekly = f"""
-        SELECT
-            vendor_id,
-            EXTRACT(DAYOFWEEK FROM picked_up_at) as day_of_week,
-            COUNT(*) as trip_count
-        FROM `{GCP_PROJECT_ID}.facts.fct_trips`
-        WHERE DATE(picked_up_at) BETWEEN '{start_date_vendor}' AND '{end_date_vendor}'
-            AND vendor_id IN ('1', '2')
-        GROUP BY vendor_id, day_of_week
-        ORDER BY vendor_id, day_of_week
-        """
-        
-        # Query 3: Trips by month (use YYYY-MM format for better display)
-        # Always show full year data regardless of date range selector
-        query_monthly = f"""
-        SELECT
-            vendor_id,
-            FORMAT_DATE('%Y-%m', DATE(picked_up_at)) as month,
-            COUNT(*) as trip_count
-        FROM `{GCP_PROJECT_ID}.facts.fct_trips`
-        WHERE EXTRACT(YEAR FROM picked_up_at) = EXTRACT(YEAR FROM CURRENT_DATE())
-            AND vendor_id IN ('1', '2')
-        GROUP BY vendor_id, month
-        ORDER BY vendor_id, month
-        """
-        
-        # Query 4: Average speed by hour
-        query_speed = f"""
-        SELECT
-            vendor_id,
-            EXTRACT(HOUR FROM picked_up_at) as hour,
-            AVG(trip_distance / NULLIF(TIMESTAMP_DIFF(dropped_off_at, picked_up_at, SECOND) / 3600.0, 0)) as avg_speed_mph
-        FROM `{GCP_PROJECT_ID}.facts.fct_trips`
-        WHERE DATE(picked_up_at) BETWEEN '{start_date_vendor}' AND '{end_date_vendor}'
-            AND vendor_id IN ('1', '2')
-            AND trip_distance > 0
-            AND TIMESTAMP_DIFF(dropped_off_at, picked_up_at, SECOND) > 0
-        GROUP BY vendor_id, hour
-        HAVING avg_speed_mph < 60  -- Filter outliers
-        ORDER BY vendor_id, hour
-        """
-        
-        try:
-            df_hourly = client.query(query_hourly).to_dataframe()
-            df_weekly = client.query(query_weekly).to_dataframe()
-            df_monthly = client.query(query_monthly).to_dataframe()
-            df_speed = client.query(query_speed).to_dataframe()
+        if DEMO_MODE:
+            # Use demo data
+            df_hourly, df_weekly, df_monthly, df_speed = get_demo_vendor_data()
+        else:
+            # Query 1: Trips by hour
+            query_hourly = f"""
+            SELECT
+                vendor_id,
+                EXTRACT(HOUR FROM picked_up_at) as hour,
+                COUNT(*) as trip_count
+            FROM `{GCP_PROJECT_ID}.facts.fct_trips`
+            WHERE DATE(picked_up_at) BETWEEN '{start_date_vendor}' AND '{end_date_vendor}'
+                AND vendor_id IN ('1', '2')
+            GROUP BY vendor_id, hour
+            ORDER BY vendor_id, hour
+            """
             
-            # Convert vendor_id to int for proper mapping
-            df_hourly['vendor_id'] = df_hourly['vendor_id'].astype(int)
-            df_weekly['vendor_id'] = df_weekly['vendor_id'].astype(int)
-            df_monthly['vendor_id'] = df_monthly['vendor_id'].astype(int)
-            df_speed['vendor_id'] = df_speed['vendor_id'].astype(int)
+            # Query 2: Trips by day of week
+            query_weekly = f"""
+            SELECT
+                vendor_id,
+                EXTRACT(DAYOFWEEK FROM picked_up_at) as day_of_week,
+                COUNT(*) as trip_count
+            FROM `{GCP_PROJECT_ID}.facts.fct_trips`
+            WHERE DATE(picked_up_at) BETWEEN '{start_date_vendor}' AND '{end_date_vendor}'
+                AND vendor_id IN ('1', '2')
+            GROUP BY vendor_id, day_of_week
+            ORDER BY vendor_id, day_of_week
+            """
             
+            # Query 3: Trips by month (use YYYY-MM format for better display)
+            # Always show full year data regardless of date range selector
+            query_monthly = f"""
+            SELECT
+                vendor_id,
+                FORMAT_DATE('%Y-%m', DATE(picked_up_at)) as month,
+                COUNT(*) as trip_count
+            FROM `{GCP_PROJECT_ID}.facts.fct_trips`
+            WHERE EXTRACT(YEAR FROM picked_up_at) = EXTRACT(YEAR FROM CURRENT_DATE())
+                AND vendor_id IN ('1', '2')
+            GROUP BY vendor_id, month
+            ORDER BY vendor_id, month
+            """
+            
+            # Query 4: Average speed by hour
+            query_speed = f"""
+            SELECT
+                vendor_id,
+                EXTRACT(HOUR FROM picked_up_at) as hour,
+                AVG(trip_distance / NULLIF(TIMESTAMP_DIFF(dropped_off_at, picked_up_at, SECOND) / 3600.0, 0)) as avg_speed_mph
+            FROM `{GCP_PROJECT_ID}.facts.fct_trips`
+            WHERE DATE(picked_up_at) BETWEEN '{start_date_vendor}' AND '{end_date_vendor}'
+                AND vendor_id IN ('1', '2')
+                AND trip_distance > 0
+                AND TIMESTAMP_DIFF(dropped_off_at, picked_up_at, SECOND) > 0
+            GROUP BY vendor_id, hour
+            HAVING avg_speed_mph < 60  -- Filter outliers
+            ORDER BY vendor_id, hour
+            """
+            
+            try:
+                df_hourly = client.query(query_hourly).to_dataframe()
+                df_weekly = client.query(query_weekly).to_dataframe()
+                df_monthly = client.query(query_monthly).to_dataframe()
+                df_speed = client.query(query_speed).to_dataframe()
+                
+                # Convert vendor_id to int for proper mapping
+                df_hourly['vendor_id'] = df_hourly['vendor_id'].astype(int)
+                df_weekly['vendor_id'] = df_weekly['vendor_id'].astype(int)
+                df_monthly['vendor_id'] = df_monthly['vendor_id'].astype(int)
+                df_speed['vendor_id'] = df_speed['vendor_id'].astype(int)
+                
+            except Exception as e:
+                st.error(f"Error loading vendor data: {e}")
+                st.stop()
+        
+        # Process data only for non-demo mode (demo data already processed)
+        if not DEMO_MODE:
             # Map day of week numbers to names
             day_names = {1: 'Sun', 2: 'Mon', 3: 'Tue', 4: 'Wed', 5: 'Thu', 6: 'Fri', 7: 'Sat'}
             df_weekly['day_name'] = df_weekly['day_of_week'].map(day_names)
@@ -1505,10 +1561,6 @@ with tab6:
             df_hourly['Vendor ID'] = df_hourly['vendor_id'].map(vendor_names)
             df_weekly['Vendor ID'] = df_weekly['vendor_id'].map(vendor_names)
             df_monthly['Vendor ID'] = df_monthly['vendor_id'].map(vendor_names)
-            
-        except Exception as e:
-            st.error(f"Error loading vendor data: {e}")
-            st.stop()
     
     if df_hourly.empty:
         st.warning("No data available for selected date range")
