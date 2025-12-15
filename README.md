@@ -230,12 +230,9 @@ NYC_Taxi_Project/
 │
 ├── doc/                            # Documentation
 │   ├── ARCHITECTURE.md             # System architecture details
-│   ├── project_report.md           # Comprehensive project report
 │   ├── DEPLOYMENT_GUIDE.md         # Deployment instructions
-│   ├── SETUP_FROM_SCRATCH.md       # Complete setup guide
 │   ├── data_warehouse_erd.md       # Data warehouse ERD
-│   ├── FARE_PREDICTION_TRAINING_GUIDE.md
-│   ├── REALTIME_FARE_PREDICTION_USE_CASE.md
+│   ├── data_warehouse_summary.md 
 │   └── h3_vs_zones_comparison.md   # H3 vs traditional zones analysis
 │
 ├── airflow_dags/                   # Apache Airflow orchestration
@@ -473,7 +470,7 @@ The project includes an interactive Streamlit dashboard for data exploration and
 - **Demand Heatmaps**: Geographic visualization of taxi demand
 - **Time Series Plots**: Hourly, daily, weekly demand patterns
 - **Forecast Comparison**: Actual vs predicted demand
-- **Weather Correlation**: Impact of weather on taxi usage
+- **Customer segmentation & RFM analysis**: Customer segmentation based on RFM, focast revenue for each locations.
 - **Vendor Analysis**: Performance comparison across vendors
 - **PCA Clustering**: Zone clustering based on demand patterns
 
@@ -527,10 +524,6 @@ Comprehensive documentation is available in the `doc/` directory:
 
 - **ARCHITECTURE.md**: Detailed system architecture with diagrams
 - **DEPLOYMENT_GUIDE.md**: Step-by-step deployment instructions
-- **SETUP_FROM_SCRATCH.md**: Complete setup guide from scratch
-- **project_report.md**: Comprehensive project report (Vietnamese)
-- **FARE_PREDICTION_TRAINING_GUIDE.md**: Fare model training guide
-- **REALTIME_FARE_PREDICTION_USE_CASE.md**: Real-time prediction use case
 - **data_warehouse_erd.md**: Entity Relationship Diagram
 - **h3_vs_zones_comparison.md**: H3 vs traditional zones analysis
 
